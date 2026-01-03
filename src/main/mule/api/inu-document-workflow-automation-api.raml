@@ -1,0 +1,246 @@
+#%RAML 1.0
+title: inu-document-workflow-automation-api
+mediaType: application/json
+protocols: [ HTTPS ]
+
+documentation:
+  - title: Overview
+    content: |
+      API for automating insurance document ingestion, processing,
+      rules evaluation, and approval workflows across claims,
+      underwriting, and policy servicing.
+
+securitySchemes:
+  client_id_auth:
+    type: x-client-credentials
+    describedBy:
+      headers:
+        client_id:
+          type: string
+          required: true
+          description: Client application identifier
+        client_secret:
+          type: string
+          required: true
+          description: Client application secret
+      responses:
+        401:
+          description: Invalid client credentials
+        403:
+          description: Client not authorized to access this API
+
+securedBy: [ client_id_auth ]
+
+types:
+
+  DocumentUploadRequest:
+    type: object
+    properties:
+      documentType:
+        type: string
+        required: true
+        example: CLAIM_FORM
+      sourceSystem:
+        type: string
+        required: true
+        example: MOBILE_APP
+      referenceId:
+        type: string
+        required: true
+        example: CLM-902344
+      metadata:
+        type: object
+        additionalProperties: true
+
+  DocumentUploadResponse:
+    type: object
+    properties:
+      documentId:
+        type: string
+        example: DOC-778234
+      status:
+        type: string
+        example: RECEIVED
+      receivedTimestamp:
+        type: datetime
+
+  DocumentProcessingStatus:
+    type: object
+    properties:
+      documentId:
+        type: string
+      classification:
+        type: string
+        example: AUTO_CLAIM_ESTIMATE
+      ocrStatus:
+        type: string
+        example: COMPLETED
+      processingStatus:
+        type: string
+        example: READY_FOR_RULES
+
+  RuleEvaluationRequest:
+    type: object
+    properties:
+      documentId:
+        type: string
+        required: true
+      ruleSet:
+        type: string
+        required: true
+        example: CLAIM_ELIGIBILITY_RULES
+      context:
+        type: object
+        additionalProperties: true
+
+  RuleEvaluationResponse:
+    type: object
+    properties:
+      decision:
+        type: string
+        example: APPROVAL_REQUIRED
+      confidenceScore:
+        type: number
+        example: 0.91
+      reasons:
+        type: array
+        items:
+          type: string
+
+  WorkflowRequest:
+    type: object
+    properties:
+      workflowType:
+        type: string
+        required: true
+        example: CLAIM_ADJUSTER_APPROVAL
+      referenceId:
+        type: string
+        required: true
+        example: CLM-902344
+      priority:
+        type: string
+        enum: [ LOW, MEDIUM, HIGH ]
+      assignedRole:
+        type: string
+        example: SENIOR_ADJUSTER
+
+  WorkflowResponse:
+    type: object
+    properties:
+      workflowId:
+        type: string
+        example: WF-443221
+      status:
+        type: string
+        example: IN_PROGRESS
+
+  ApprovalDecision:
+    type: object
+    properties:
+      decision:
+        type: string
+        required: true
+        enum: [ APPROVED, REJECTED, MORE_INFO_REQUIRED ]
+      actor:
+        type: string
+        required: true
+        example: adjuster.john
+      comments:
+        type: string
+
+  ErrorResponse:
+    type: object
+    properties:
+      errorCode:
+        type: string
+      message:
+        type: string
+      correlationId:
+        type: string
+
+/resources:
+
+  /documents:
+    post:
+      description: Upload insurance documents (PDF/images) for processing
+      body:
+        multipart/form-data:
+          properties:
+            file:
+              type: file
+            metadata:
+              type: DocumentUploadRequest
+      responses:
+        201:
+          body:
+            application/json:
+              type: DocumentUploadResponse
+        400:
+          body:
+            application/json:
+              type: ErrorResponse
+
+  /documents/{documentId}:
+    uriParameters:
+      documentId: string
+    get:
+      description: Retrieve document processing status
+      responses:
+        200:
+          body:
+            application/json:
+              type: DocumentProcessingStatus
+        404:
+          body:
+            application/json:
+              type: ErrorResponse
+
+  /rules/evaluate:
+    post:
+      description: Execute insurance rules against document data
+      body:
+        application/json:
+          type: RuleEvaluationRequest
+      responses:
+        200:
+          body:
+            application/json:
+              type: RuleEvaluationResponse
+
+  /workflows:
+    post:
+      description: Start an approval workflow
+      body:
+        application/json:
+          type: WorkflowRequest
+      responses:
+        201:
+          body:
+            application/json:
+              type: WorkflowResponse
+
+  /workflows/{workflowId}/approval:
+    uriParameters:
+      workflowId: string
+    post:
+      description: Submit approval decision
+      body:
+        application/json:
+          type: ApprovalDecision
+      responses:
+        200:
+          body:
+            application/json:
+              type: WorkflowResponse
+
+  /health:
+    get:
+      securedBy: []
+      description: Health check endpoint
+      responses:
+        200:
+          body:
+            application/json:
+              example:
+                status: UP

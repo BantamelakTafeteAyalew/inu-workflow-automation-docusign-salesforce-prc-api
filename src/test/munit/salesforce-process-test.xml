@@ -1,0 +1,261 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+	xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+		http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<munit:config name="salesforce-process-test-suite" doc:name="MUnit Configuration"/>
+
+	<!-- ============================================== -->
+	<!-- TEST: Salesforce Upsert Success               -->
+	<!-- ============================================== -->
+
+	<munit:test name="salesforce-upsert-success-test" doc:name="Salesforce Upsert Success Test" description="Test successful Salesforce upsert operation">
+		
+		<munit:behavior>
+			
+			<!-- Mock Salesforce Upsert -->
+			<munit-tools:mock-when processor="salesforce:upsert" doc:name="Mock Salesforce Upsert">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{
+						"items": [
+							{"id": "a0B1234567890AB", "successful": true, "created": true},
+							{"id": "a0B1234567890CD", "successful": true, "created": false}
+						]
+					}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Set Test Event -->
+			<munit:set-event doc:name="Set Test Event">
+				<munit:payload value='#[[
+					{
+						"Document_ID__c": "DOC-12345678",
+						"Document_Type__c": "CLAIM_FORM",
+						"Status__c": "RECEIVED"
+					},
+					{
+						"Document_ID__c": "DOC-87654321",
+						"Document_Type__c": "POLICY_DOCUMENT",
+						"Status__c": "PROCESSED"
+					}
+				]]' mediaType="application/java"/>
+				<munit:variables>
+					<munit:variable key="correlationId" value="test-correlation-id-016"/>
+				</munit:variables>
+			</munit:set-event>
+
+		</munit:behavior>
+
+		<munit:execution>
+			<flow-ref name="sf-upsert-process-record-flow" doc:name="Execute SF Upsert Flow"/>
+		</munit:execution>
+
+		<munit:validation>
+			<!-- Assert Upsert Results Stored -->
+			<munit-tools:assert-that doc:name="Assert Results Present" expression="#[vars.sfUpsertResults]" is="#[MunitTools::notNullValue()]"/>
+			
+			<!-- Assert All Records Successful -->
+			<munit-tools:assert-that doc:name="Assert All Successful" expression="#[sizeOf(vars.sfUpsertResults.items filter $.successful)]" is="#[MunitTools::equalTo(2)]"/>
+		</munit:validation>
+
+	</munit:test>
+
+	<!-- ============================================== -->
+	<!-- TEST: Salesforce Upsert Partial Failure       -->
+	<!-- ============================================== -->
+
+	<munit:test name="salesforce-upsert-partial-failure-test" doc:name="Salesforce Upsert Partial Failure Test" description="Test Salesforce upsert with partial failures">
+		
+		<munit:behavior>
+			
+			<!-- Mock Salesforce Upsert with Partial Failure -->
+			<munit-tools:mock-when processor="salesforce:upsert" doc:name="Mock Salesforce Upsert">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{
+						"items": [
+							{"id": "a0B1234567890AB", "successful": true, "created": true},
+							{"id": null, "successful": false, "message": "REQUIRED_FIELD_MISSING: Required field missing"}
+						]
+					}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Set Test Event -->
+			<munit:set-event doc:name="Set Test Event">
+				<munit:payload value='#[[
+					{
+						"Document_ID__c": "DOC-12345678",
+						"Document_Type__c": "CLAIM_FORM",
+						"Status__c": "RECEIVED"
+					},
+					{
+						"Document_ID__c": "DOC-INVALID"
+					}
+				]]' mediaType="application/java"/>
+				<munit:variables>
+					<munit:variable key="correlationId" value="test-correlation-id-017"/>
+				</munit:variables>
+			</munit:set-event>
+
+		</munit:behavior>
+
+		<munit:execution>
+			<flow-ref name="sf-upsert-process-record-flow" doc:name="Execute SF Upsert Flow"/>
+		</munit:execution>
+
+		<munit:validation>
+			<!-- Assert One Success -->
+			<munit-tools:assert-that doc:name="Assert One Success" expression="#[sizeOf(vars.sfUpsertResults.items filter $.successful)]" is="#[MunitTools::equalTo(1)]"/>
+			
+			<!-- Assert One Failure -->
+			<munit-tools:assert-that doc:name="Assert One Failure" expression="#[sizeOf(vars.sfUpsertResults.items filter !$.successful)]" is="#[MunitTools::equalTo(1)]"/>
+		</munit:validation>
+
+	</munit:test>
+
+	<!-- ============================================== -->
+	<!-- TEST: Salesforce Query Success                -->
+	<!-- ============================================== -->
+
+	<munit:test name="salesforce-query-success-test" doc:name="Salesforce Query Success Test" description="Test successful Salesforce query operation">
+		
+		<munit:behavior>
+			
+			<!-- Mock Salesforce Query -->
+			<munit-tools:mock-when processor="salesforce:query" doc:name="Mock Salesforce Query">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[[
+						{"Document_ID__c": "DOC-12345678", "Status__c": "RECEIVED", "Processing_Status__c": "AWAITING_OCR"},
+						{"Document_ID__c": "DOC-87654321", "Status__c": "PROCESSED", "Processing_Status__c": "COMPLETED"}
+					]]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Set Test Event -->
+			<munit:set-event doc:name="Set Test Event">
+				<munit:payload value='#[null]'/>
+				<munit:variables>
+					<munit:variable key="correlationId" value="test-correlation-id-018"/>
+					<munit:variable key="sfQuery" value="SELECT Document_ID__c, Status__c, Processing_Status__c FROM Insurance_Document__c"/>
+					<munit:variable key="sfQueryParams" value='#[{}]'/>
+				</munit:variables>
+			</munit:set-event>
+
+		</munit:behavior>
+
+		<munit:execution>
+			<flow-ref name="sf-query-records-flow" doc:name="Execute SF Query Flow"/>
+		</munit:execution>
+
+		<munit:validation>
+			<!-- Assert Query Results Present -->
+			<munit-tools:assert-that doc:name="Assert Results Present" expression="#[vars.sfQueryResults]" is="#[MunitTools::notNullValue()]"/>
+			
+			<!-- Assert Record Count -->
+			<munit-tools:assert-that doc:name="Assert Record Count" expression="#[sizeOf(vars.sfQueryResults)]" is="#[MunitTools::equalTo(2)]"/>
+		</munit:validation>
+
+	</munit:test>
+
+	<!-- ============================================== -->
+	<!-- TEST: Salesforce Status Sync Flow             -->
+	<!-- ============================================== -->
+
+	<munit:test name="salesforce-status-sync-test" doc:name="Salesforce Status Sync Test" description="Test Salesforce status sync flow">
+		
+		<munit:behavior>
+			
+			<!-- Mock Salesforce Query -->
+			<munit-tools:mock-when processor="salesforce:query" doc:name="Mock Salesforce Query">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[[
+						{"Document_ID__c": "DOC-12345678", "Status__c": "RECEIVED"}
+					]]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Mock Object Store Retrieve -->
+			<munit-tools:mock-when processor="os:retrieve" doc:name="Mock OS Retrieve">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{
+						"documentId": "DOC-12345678",
+						"status": "PROCESSED",
+						"processingStatus": "COMPLETED",
+						"ocrStatus": "COMPLETED",
+						"classification": "AUTO_CLAIM"
+					}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Mock Salesforce Upsert -->
+			<munit-tools:mock-when processor="salesforce:upsert" doc:name="Mock Salesforce Upsert">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"items": [{"id": "a0B1234567890AB", "successful": true}]}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Set Test Event -->
+			<munit:set-event doc:name="Set Test Event">
+				<munit:payload value='#[null]'/>
+				<munit:variables>
+					<munit:variable key="correlationId" value="test-correlation-id-019"/>
+					<munit:variable key="syncType" value="DOCUMENT"/>
+				</munit:variables>
+			</munit:set-event>
+
+		</munit:behavior>
+
+		<munit:execution>
+			<flow-ref name="sf-status-sync-flow" doc:name="Execute SF Status Sync Flow"/>
+		</munit:execution>
+
+		<munit:validation>
+			<!-- Assert Sync Status -->
+			<munit-tools:assert-that doc:name="Assert Status COMPLETED" expression="#[payload.status]" is="#[MunitTools::equalTo('COMPLETED')]"/>
+			
+			<!-- Assert Documents Processed -->
+			<munit-tools:assert-that doc:name="Assert Documents Processed" expression="#[payload.documentsProcessed]" is="#[MunitTools::greaterThanOrEqualTo(0)]"/>
+		</munit:validation>
+
+	</munit:test>
+
+	<!-- ============================================== -->
+	<!-- TEST: Health Check Endpoint                   -->
+	<!-- ============================================== -->
+
+	<munit:test name="health-check-test" doc:name="Health Check Test" description="Test health check endpoint">
+		
+		<munit:behavior>
+			<!-- Set Test Event -->
+			<munit:set-event doc:name="Set Test Event">
+				<munit:payload value='#[null]'/>
+				<munit:variables>
+					<munit:variable key="correlationId" value="test-correlation-id-020"/>
+				</munit:variables>
+			</munit:set-event>
+		</munit:behavior>
+
+		<munit:execution>
+			<flow-ref name="get:\resources\health:inu-document-workflow-automation-api-config" doc:name="Execute Health Check"/>
+		</munit:execution>
+
+		<munit:validation>
+			<!-- Assert Status UP -->
+			<munit-tools:assert-that doc:name="Assert Status UP" expression="#[payload.status]" is="#[MunitTools::equalTo('UP')]"/>
+			
+			<!-- Assert Timestamp Present -->
+			<munit-tools:assert-that doc:name="Assert Timestamp Present" expression="#[payload.timestamp]" is="#[MunitTools::notNullValue()]"/>
+		</munit:validation>
+
+	</munit:test>
+
+</mule>

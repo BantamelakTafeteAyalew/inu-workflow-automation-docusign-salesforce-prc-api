@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:salesforce="http://www.mulesoft.org/schema/mule/salesforce"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<!-- ============================================== -->
+	<!-- SALESFORCE PROCESS UPDATE FLOW                -->
+	<!-- Central flow for upserting process records    -->
+	<!-- to Salesforce for process documentation       -->
+	<!-- ============================================== -->
+
+	<flow name="sf-upsert-process-record-flow" doc:name="SF Upsert Process Record Flow">
+		
+		<!-- Store Records for Upsert -->
+		<set-variable variableName="sfRecords" value="#[payload]" doc:name="Store SF Records"/>
+
+		<!-- Log External Request -->
+		<set-variable variableName="targetSystem" value="SALESFORCE" doc:name="Set Target System"/>
+		<set-variable variableName="operation" value="UPSERT_PROCESS_RECORD" doc:name="Set Operation"/>
+		<flow-ref name="log-external-request-subflow" doc:name="Log External Request"/>
+
+		<!-- Determine Object Type Based on Record Content -->
+		<choice doc:name="Determine Object Type">
+			<when expression="#[vars.sfRecords[0].Document_ID__c != null]">
+				<set-variable variableName="sfObjectType" value="Insurance_Document__c" doc:name="Set Document Object"/>
+				<set-variable variableName="sfExternalIdField" value="Document_ID__c" doc:name="Set External ID Field"/>
+			</when>
+			<when expression="#[vars.sfRecords[0].Workflow_ID__c != null]">
+				<set-variable variableName="sfObjectType" value="Insurance_Workflow__c" doc:name="Set Workflow Object"/>
+				<set-variable variableName="sfExternalIdField" value="Workflow_ID__c" doc:name="Set External ID Field"/>
+			</when>
+			<otherwise>
+				<set-variable variableName="sfObjectType" value="Insurance_Process__c" doc:name="Set Process Object"/>
+				<set-variable variableName="sfExternalIdField" value="Process_ID__c" doc:name="Set External ID Field"/>
+			</otherwise>
+		</choice>
+
+		<!-- Upsert to Salesforce -->
+		<salesforce:upsert config-ref="Salesforce_Config" objectType="#[vars.sfObjectType]" externalIdFieldName="#[vars.sfExternalIdField]" doc:name="Upsert to Salesforce">
+			<salesforce:records><![CDATA[#[vars.sfRecords]]]></salesforce:records>
+		</salesforce:upsert>
+
+		<!-- Store Upsert Results -->
+		<set-variable variableName="sfUpsertResults" value="#[payload]" doc:name="Store Upsert Results"/>
+
+		<!-- Log Results -->
+		<logger level="INFO" doc:name="Log Upsert Results" message='#[%dw 2.0
+output application/json
+---
+{
+	"logType": "SALESFORCE_UPSERT_RESULT",
+	"correlationId": vars.correlationId default correlationId,
+	"objectType": vars.sfObjectType,
+	"recordCount": sizeOf(vars.sfRecords),
+	"successCount": sizeOf(vars.sfUpsertResults.items filter $.successful)
+}]'/>
+
+		<!-- Check for Failures -->
+		<choice doc:name="Check for Failures">
+			<when expression="#[sizeOf(vars.sfUpsertResults.items filter !$.successful) > 0]">
+				<logger level="WARN" doc:name="Log Failures" message='#[%dw 2.0
+output application/json
+---
+{
+	"logType": "SALESFORCE_UPSERT_FAILURES",
+	"correlationId": vars.correlationId default correlationId,
+	"failures": vars.sfUpsertResults.items filter !$.successful
+}]'/>
+			</when>
+		</choice>
+
+	</flow>
+
+	<!-- ============================================== -->
+	<!-- SALESFORCE QUERY FLOW                         -->
+	<!-- Generic flow for querying Salesforce records  -->
+	<!-- ============================================== -->
+
+	<flow name="sf-query-records-flow" doc:name="SF Query Records Flow">
+		
+		<!-- Log External Request -->
+		<set-variable variableName="targetSystem" value="SALESFORCE" doc:name="Set Target System"/>
+		<set-variable variableName="operation" value="QUERY_RECORDS" doc:name="Set Operation"/>
+		<flow-ref name="log-external-request-subflow" doc:name="Log External Request"/>
+
+		<!-- Execute Query -->
+		<salesforce:query config-ref="Salesforce_Config" doc:name="Query Salesforce">
+			<salesforce:salesforce-query><![CDATA[#[vars.sfQuery]]]></salesforce:salesforce-query>
+			<salesforce:parameters><![CDATA[#[vars.sfQueryParams default {}]]]></salesforce:parameters>
+		</salesforce:query>
+
+		<!-- Store Query Results -->
+		<set-variable variableName="sfQueryResults" value="#[payload]" doc:name="Store Query Results"/>
+
+		<!-- Log Results -->
+		<logger level="INFO" doc:name="Log Query Results" message='#[%dw 2.0
+output application/json
+---
+{
+	"logType": "SALESFORCE_QUERY_RESULT",
+	"correlationId": vars.correlationId default correlationId,
+	"recordCount": sizeOf(vars.sfQueryResults default [])
+}]'/>
+
+	</flow>
+
+</mule>

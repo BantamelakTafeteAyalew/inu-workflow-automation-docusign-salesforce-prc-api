@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<!-- ============================================== -->
+	<!-- CORRELATION ID SUBFLOWS                       -->
+	<!-- Centralized correlation ID management         -->
+	<!-- ============================================== -->
+
+	<sub-flow name="set-correlation-id-subflow" doc:name="Set Correlation ID Subflow">
+		<ee:transform doc:name="Set Correlation ID and Request Start Time">
+			<ee:variables>
+				<ee:set-variable variableName="correlationId"><![CDATA[%dw 2.0
+output application/java
+---
+attributes.headers."x-correlation-id" default correlationId]]></ee:set-variable>
+				<ee:set-variable variableName="requestStartTime"><![CDATA[%dw 2.0
+output application/java
+---
+now()]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+	</sub-flow>
+
+	<sub-flow name="propagate-correlation-id-subflow" doc:name="Propagate Correlation ID Subflow">
+		<ee:transform doc:name="Build Correlation Headers">
+			<ee:variables>
+				<ee:set-variable variableName="correlationHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{
+	"X-Correlation-Id": vars.correlationId default correlationId,
+	"X-Request-Id": uuid()
+}]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+	</sub-flow>
+
+	<sub-flow name="add-response-headers-subflow" doc:name="Add Response Headers Subflow">
+		<ee:transform doc:name="Set Outbound Headers">
+			<ee:variables>
+				<ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{
+	"X-Correlation-Id": vars.correlationId default correlationId,
+	"X-Response-Time": (now() - (vars.requestStartTime default now())) as Number {unit: "milliseconds"} as String
+}]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+	</sub-flow>
+
+</mule>

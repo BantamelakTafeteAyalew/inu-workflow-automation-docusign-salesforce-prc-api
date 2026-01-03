@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+	xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+		http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<munit:config name="rule-evaluation-test-suite" doc:name="MUnit Configuration"/>
+
+	<!-- ============================================== -->
+	<!-- TEST: Rule Evaluation Success                 -->
+	<!-- ============================================== -->
+
+	<munit:test name="rule-evaluation-success-test" doc:name="Rule Evaluation Success Test" description="Test successful rule evaluation flow">
+		
+		<munit:behavior>
+			
+			<!-- Mock Object Store Retrieve for Document -->
+			<munit-tools:mock-when processor="os:retrieve" doc:name="Mock OS Retrieve">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute whereValue="Document_Object_Store" attributeName="objectStore"/>
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{
+						"documentId": "DOC-12345678",
+						"documentType": "CLAIM_FORM",
+						"classification": "AUTO_CLAIM_ESTIMATE",
+						"ocrStatus": "COMPLETED",
+						"processingStatus": "READY_FOR_RULES",
+						"ocrData": {"claimAmount": 5000, "vehicleType": "SEDAN"}
+					}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Mock Rules Engine HTTP Request -->
+			<munit-tools:mock-when processor="http:request" doc:name="Mock Rules Engine Request">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute whereValue="Rules_HTTP_Request_Config" attributeName="config-ref"/>
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{
+						"decision": "APPROVAL_REQUIRED",
+						"confidenceScore": 0.91,
+						"reasons": ["Claim amount exceeds auto-approval threshold", "Vehicle type requires manual review"]
+					}]' mediaType="application/json"/>
+					<munit-tools:attributes value='#[{"statusCode": 200}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Mock Object Store Store -->
+			<munit-tools:mock-when processor="os:store" doc:name="Mock OS Store">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+
+			<!-- Mock Salesforce Upsert -->
+			<munit-tools:mock-when processor="salesforce:upsert" doc:name="Mock Salesforce Upsert">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"items": [{"id": "a0B1234567890AB", "successful": true}]}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Set Test Event -->
+			<munit:set-event doc:name="Set Test Event">
+				<munit:payload value='#[{
+					"documentId": "DOC-12345678",
+					"ruleSet": "CLAIM_ELIGIBILITY_RULES",
+					"context": {"claimType": "AUTO", "policyNumber": "POL-123456"}
+				}]' mediaType="application/json"/>
+				<munit:attributes value='#[{"headers": {"client_id": "test-client", "client_secret": "test-secret"}}]'/>
+				<munit:variables>
+					<munit:variable key="correlationId" value="test-correlation-id-005"/>
+				</munit:variables>
+			</munit:set-event>
+
+		</munit:behavior>
+
+		<munit:execution>
+			<flow-ref name="rule-evaluation-flow" doc:name="Execute Rule Evaluation Flow"/>
+		</munit:execution>
+
+		<munit:validation>
+			<!-- Assert Response Status -->
+			<munit-tools:assert-that doc:name="Assert HTTP Status 200" expression="#[vars.httpStatus]" is="#[MunitTools::equalTo(200)]"/>
+			
+			<!-- Assert Decision -->
+			<munit-tools:assert-that doc:name="Assert Decision" expression="#[payload.decision]" is="#[MunitTools::equalTo('APPROVAL_REQUIRED')]"/>
+			
+			<!-- Assert Confidence Score -->
+			<munit-tools:assert-that doc:name="Assert Confidence Score" expression="#[payload.confidenceScore]" is="#[MunitTools::equalTo(0.91)]"/>
+			
+			<!-- Assert Reasons Present -->
+			<munit-tools:assert-that doc:name="Assert Reasons Present" expression="#[sizeOf(payload.reasons)]" is="#[MunitTools::greaterThan(0)]"/>
+		</munit:validation>
+
+	</munit:test>
+
+	<!-- ============================================== -->
+	<!-- TEST: Rule Evaluation Document Not Found      -->
+	<!-- ============================================== -->
+
+	<munit:test name="rule-evaluation-document-not-found-test" doc:name="Rule Evaluation Document Not Found Test" description="Test rule evaluation with non-existent document" expectedErrorType="APP:RESOURCE_NOT_FOUND">
+		
+		<munit:behavior>
+			
+			<!-- Mock Object Store Retrieve returning null -->
+			<munit-tools:mock-when processor="os:retrieve" doc:name="Mock OS Retrieve">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[null]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Set Test Event -->
+			<munit:set-event doc:name="Set Test Event">
+				<munit:payload value='#[{
+					"documentId": "DOC-NONEXISTENT",
+					"ruleSet": "CLAIM_ELIGIBILITY_RULES",
+					"context": {}
+				}]' mediaType="application/json"/>
+				<munit:attributes value='#[{"headers": {"client_id": "test-client", "client_secret": "test-secret"}}]'/>
+				<munit:variables>
+					<munit:variable key="correlationId" value="test-correlation-id-006"/>
+				</munit:variables>
+			</munit:set-event>
+
+		</munit:behavior>
+
+		<munit:execution>
+			<flow-ref name="rule-evaluation-flow" doc:name="Execute Rule Evaluation Flow"/>
+		</munit:execution>
+
+	</munit:test>
+
+	<!-- ============================================== -->
+	<!-- TEST: Rule Evaluation Validation Error        -->
+	<!-- ============================================== -->
+
+	<munit:test name="rule-evaluation-validation-error-test" doc:name="Rule Evaluation Validation Error Test" description="Test rule evaluation with missing required fields" expectedErrorType="APP:VALIDATION_ERROR">
+		
+		<munit:behavior>
+			<!-- Set Test Event with Missing Rule Set -->
+			<munit:set-event doc:name="Set Test Event">
+				<munit:payload value='#[{
+					"documentId": "DOC-12345678",
+					"context": {}
+				}]' mediaType="application/json"/>
+				<munit:attributes value='#[{"headers": {"client_id": "test-client", "client_secret": "test-secret"}}]'/>
+				<munit:variables>
+					<munit:variable key="correlationId" value="test-correlation-id-007"/>
+				</munit:variables>
+			</munit:set-event>
+		</munit:behavior>
+
+		<munit:execution>
+			<flow-ref name="rule-evaluation-flow" doc:name="Execute Rule Evaluation Flow"/>
+		</munit:execution>
+
+	</munit:test>
+
+</mule>

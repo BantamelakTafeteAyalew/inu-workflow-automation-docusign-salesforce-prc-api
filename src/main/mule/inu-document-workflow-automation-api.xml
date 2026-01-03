@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+		http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<!-- ============================================== -->
+	<!-- MAIN API FLOW - APIKIT ROUTER                 -->
+	<!-- ============================================== -->
+
+	<flow name="inu-document-workflow-automation-api-main" doc:name="Main API Flow">
+		<http:listener config-ref="HTTP_Listener_Config" path="${http.listener.basePath}/*" doc:name="HTTP Listener">
+			<http:response statusCode="#[vars.httpStatus default 200]">
+				<http:headers><![CDATA[#[vars.outboundHeaders default {}]]]></http:headers>
+			</http:response>
+			<http:error-response statusCode="#[vars.httpStatus default 500]">
+				<http:body><![CDATA[#[payload]]]></http:body>
+				<http:headers><![CDATA[#[vars.outboundHeaders default {}]]]></http:headers>
+			</http:error-response>
+		</http:listener>
+		
+		<!-- Set Correlation ID -->
+		<flow-ref name="set-correlation-id-subflow" doc:name="Set Correlation ID"/>
+		
+		<!-- Log Incoming Request -->
+		<flow-ref name="log-request-subflow" doc:name="Log Request"/>
+		
+		<!-- APIkit Router - Routes to implementation flows -->
+		<apikit:router config-ref="inu-document-workflow-automation-api-config" doc:name="APIkit Router"/>
+		
+		<!-- Add Response Headers -->
+		<flow-ref name="add-response-headers-subflow" doc:name="Add Response Headers"/>
+		
+		<!-- Log Response -->
+		<flow-ref name="log-response-subflow" doc:name="Log Response"/>
+	</flow>
+
+	<!-- ============================================== -->
+	<!-- APIKIT GENERATED FLOWS - ROUTING ONLY         -->
+	<!-- ============================================== -->
+
+	<!-- POST /resources/documents - Upload Document -->
+	<flow name="post:\resources\documents:multipart\form-data:inu-document-workflow-automation-api-config" doc:name="POST /documents">
+		<flow-ref name="document-upload-flow" doc:name="Document Upload Flow"/>
+	</flow>
+
+	<!-- GET /resources/documents/{documentId} - Get Document Status -->
+	<flow name="get:\resources\documents\(documentId):inu-document-workflow-automation-api-config" doc:name="GET /documents/{documentId}">
+		<flow-ref name="document-status-flow" doc:name="Document Status Flow"/>
+	</flow>
+
+	<!-- POST /resources/rules/evaluate - Evaluate Rules -->
+	<flow name="post:\resources\rules\evaluate:application\json:inu-document-workflow-automation-api-config" doc:name="POST /rules/evaluate">
+		<flow-ref name="rule-evaluation-flow" doc:name="Rule Evaluation Flow"/>
+	</flow>
+
+	<!-- POST /resources/workflows - Start Workflow -->
+	<flow name="post:\resources\workflows:application\json:inu-document-workflow-automation-api-config" doc:name="POST /workflows">
+		<flow-ref name="workflow-initiation-flow" doc:name="Workflow Initiation Flow"/>
+	</flow>
+
+	<!-- POST /resources/workflows/{workflowId}/approval - Submit Approval -->
+	<flow name="post:\resources\workflows\(workflowId)\approval:application\json:inu-document-workflow-automation-api-config" doc:name="POST /workflows/{workflowId}/approval">
+		<flow-ref name="workflow-approval-flow" doc:name="Workflow Approval Flow"/>
+	</flow>
+
+	<!-- GET /resources/health - Health Check -->
+	<flow name="get:\resources\health:inu-document-workflow-automation-api-config" doc:name="GET /health">
+		<ee:transform doc:name="Health Response">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	status: "UP",
+	timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	version: p('api.version')
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+	</flow>
+
+</mule>

@@ -1,0 +1,341 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<!-- ============================================== -->
+	<!-- GLOBAL ERROR HANDLER                          -->
+	<!-- Centralized error handling for all flows      -->
+	<!-- ============================================== -->
+
+	<error-handler name="global-error-handler" doc:name="Global Error Handler">
+		
+		<!-- ============================================== -->
+		<!-- 400 - BAD REQUEST / VALIDATION ERRORS         -->
+		<!-- ============================================== -->
+		<on-error-propagate type="APIKIT:BAD_REQUEST" enableNotifications="true" logException="true" doc:name="400 Bad Request">
+			<ee:transform doc:name="Transform 400 Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	errorCode: "BAD_REQUEST",
+	message: error.description default "Invalid request format or missing required fields",
+	correlationId: vars.correlationId default correlationId
+}]]></ee:set-payload>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[400]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+		</on-error-propagate>
+
+		<on-error-propagate type="EXPRESSION" enableNotifications="true" logException="true" doc:name="400 Expression Error">
+			<ee:transform doc:name="Transform 400 Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	errorCode: "VALIDATION_ERROR",
+	message: error.description default "Data validation failed",
+	correlationId: vars.correlationId default correlationId
+}]]></ee:set-payload>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[400]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+		</on-error-propagate>
+
+		<!-- ============================================== -->
+		<!-- 401 - UNAUTHORIZED / SECURITY ERRORS          -->
+		<!-- ============================================== -->
+		<on-error-propagate type="CLIENT-SECURITY" enableNotifications="true" logException="true" doc:name="401 Unauthorized">
+			<ee:transform doc:name="Transform 401 Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	errorCode: "UNAUTHORIZED",
+	message: "Invalid or missing client credentials",
+	correlationId: vars.correlationId default correlationId
+}]]></ee:set-payload>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[401]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+		</on-error-propagate>
+
+		<on-error-propagate type="MULE:SECURITY" enableNotifications="true" logException="true" doc:name="401 Security Error">
+			<ee:transform doc:name="Transform 401 Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	errorCode: "UNAUTHORIZED",
+	message: "Security validation failed",
+	correlationId: vars.correlationId default correlationId
+}]]></ee:set-payload>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[401]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+		</on-error-propagate>
+
+		<!-- ============================================== -->
+		<!-- 404 - NOT FOUND                               -->
+		<!-- ============================================== -->
+		<on-error-propagate type="APIKIT:NOT_FOUND" enableNotifications="true" logException="true" doc:name="404 Not Found">
+			<ee:transform doc:name="Transform 404 Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	errorCode: "NOT_FOUND",
+	message: "The requested resource was not found",
+	correlationId: vars.correlationId default correlationId
+}]]></ee:set-payload>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[404]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+		</on-error-propagate>
+
+		<on-error-propagate type="APP:RESOURCE_NOT_FOUND" enableNotifications="true" logException="true" doc:name="404 Resource Not Found">
+			<ee:transform doc:name="Transform 404 Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	errorCode: "RESOURCE_NOT_FOUND",
+	message: error.description default "The requested resource does not exist",
+	correlationId: vars.correlationId default correlationId
+}]]></ee:set-payload>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[404]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+		</on-error-propagate>
+
+		<!-- ============================================== -->
+		<!-- 405 - METHOD NOT ALLOWED                      -->
+		<!-- ============================================== -->
+		<on-error-propagate type="APIKIT:METHOD_NOT_ALLOWED" enableNotifications="true" logException="true" doc:name="405 Method Not Allowed">
+			<ee:transform doc:name="Transform 405 Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	errorCode: "METHOD_NOT_ALLOWED",
+	message: "The HTTP method is not allowed for this resource",
+	correlationId: vars.correlationId default correlationId
+}]]></ee:set-payload>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[405]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+		</on-error-propagate>
+
+		<!-- ============================================== -->
+		<!-- 406 - NOT ACCEPTABLE                          -->
+		<!-- ============================================== -->
+		<on-error-propagate type="APIKIT:NOT_ACCEPTABLE" enableNotifications="true" logException="true" doc:name="406 Not Acceptable">
+			<ee:transform doc:name="Transform 406 Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	errorCode: "NOT_ACCEPTABLE",
+	message: "The requested media type is not supported",
+	correlationId: vars.correlationId default correlationId
+}]]></ee:set-payload>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[406]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+		</on-error-propagate>
+
+		<!-- ============================================== -->
+		<!-- 415 - UNSUPPORTED MEDIA TYPE                  -->
+		<!-- ============================================== -->
+		<on-error-propagate type="APIKIT:UNSUPPORTED_MEDIA_TYPE" enableNotifications="true" logException="true" doc:name="415 Unsupported Media Type">
+			<ee:transform doc:name="Transform 415 Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	errorCode: "UNSUPPORTED_MEDIA_TYPE",
+	message: "The request content type is not supported",
+	correlationId: vars.correlationId default correlationId
+}]]></ee:set-payload>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[415]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+		</on-error-propagate>
+
+		<!-- ============================================== -->
+		<!-- 500 - CONNECTIVITY / EXTERNAL SYSTEM ERRORS   -->
+		<!-- ============================================== -->
+		<on-error-propagate type="HTTP:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="500 HTTP Connectivity Error">
+			<ee:transform doc:name="Transform 500 Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	errorCode: "EXTERNAL_SYSTEM_ERROR",
+	message: "Unable to connect to external system. Please try again later.",
+	correlationId: vars.correlationId default correlationId
+}]]></ee:set-payload>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[500]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+		</on-error-propagate>
+
+		<on-error-propagate type="HTTP:TIMEOUT" enableNotifications="true" logException="true" doc:name="500 HTTP Timeout Error">
+			<ee:transform doc:name="Transform 500 Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	errorCode: "TIMEOUT_ERROR",
+	message: "External system request timed out. Please try again later.",
+	correlationId: vars.correlationId default correlationId
+}]]></ee:set-payload>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[500]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+		</on-error-propagate>
+
+		<!-- ============================================== -->
+		<!-- 500 - SALESFORCE CONNECTOR ERRORS             -->
+		<!-- ============================================== -->
+		<on-error-propagate type="SALESFORCE:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="500 Salesforce Connectivity Error">
+			<ee:transform doc:name="Transform 500 Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	errorCode: "SALESFORCE_CONNECTIVITY_ERROR",
+	message: "Unable to connect to Salesforce. Please try again later.",
+	correlationId: vars.correlationId default correlationId
+}]]></ee:set-payload>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[500]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+		</on-error-propagate>
+
+		<on-error-propagate type="SALESFORCE:INVALID_SESSION" enableNotifications="true" logException="true" doc:name="500 Salesforce Session Error">
+			<ee:transform doc:name="Transform 500 Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	errorCode: "SALESFORCE_SESSION_ERROR",
+	message: "Salesforce session expired. Please retry the operation.",
+	correlationId: vars.correlationId default correlationId
+}]]></ee:set-payload>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[500]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+		</on-error-propagate>
+
+		<!-- ============================================== -->
+		<!-- 500 - DOCUSIGN ERRORS                         -->
+		<!-- ============================================== -->
+		<on-error-propagate type="APP:DOCUSIGN_ERROR" enableNotifications="true" logException="true" doc:name="500 DocuSign Error">
+			<ee:transform doc:name="Transform 500 Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	errorCode: "DOCUSIGN_ERROR",
+	message: error.description default "DocuSign operation failed. Please try again later.",
+	correlationId: vars.correlationId default correlationId
+}]]></ee:set-payload>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[500]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+		</on-error-propagate>
+
+		<!-- ============================================== -->
+		<!-- 500 - RETRY EXHAUSTED                         -->
+		<!-- ============================================== -->
+		<on-error-propagate type="MULE:RETRY_EXHAUSTED" enableNotifications="true" logException="true" doc:name="500 Retry Exhausted">
+			<ee:transform doc:name="Transform 500 Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	errorCode: "RETRY_EXHAUSTED",
+	message: "Maximum retry attempts exceeded. Please try again later.",
+	correlationId: vars.correlationId default correlationId
+}]]></ee:set-payload>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[500]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+		</on-error-propagate>
+
+		<!-- ============================================== -->
+		<!-- 500 - CATCH ALL / GENERIC ERRORS              -->
+		<!-- ============================================== -->
+		<on-error-propagate type="ANY" enableNotifications="true" logException="true" doc:name="500 Generic Error">
+			<ee:transform doc:name="Transform 500 Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	errorCode: "INTERNAL_SERVER_ERROR",
+	message: "An unexpected error occurred. Please contact support.",
+	correlationId: vars.correlationId default correlationId
+}]]></ee:set-payload>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[500]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+		</on-error-propagate>
+
+	</error-handler>
+
+</mule>

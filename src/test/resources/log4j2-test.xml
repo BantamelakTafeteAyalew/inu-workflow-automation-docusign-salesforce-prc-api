@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration>
+
+    <!-- MUnit Test Log4j2 Configuration -->
+
+    <Appenders>
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="%-5p %d{ISO8601} [%t] [correlationId: %X{correlationId}] %c: %m%n"/>
+        </Console>
+    </Appenders>
+
+    <Loggers>
+        <!-- HTTP Connector Loggers -->
+        <AsyncLogger name="org.mule.service.http" level="WARN"/>
+        <AsyncLogger name="org.mule.extension.http" level="WARN"/>
+
+        <!-- Salesforce Connector Logger -->
+        <AsyncLogger name="com.mulesoft.connector.salesforce" level="WARN"/>
+
+        <!-- Reduce startup noise -->
+        <AsyncLogger name="com.mulesoft.mule.runtime.plugin" level="WARN"/>
+        <AsyncLogger name="org.mule.maven.client" level="WARN"/>
+        <AsyncLogger name="org.mule.runtime.core.internal.util" level="WARN"/>
+        <AsyncLogger name="org.quartz" level="WARN"/>
+        <AsyncLogger name="org.mule.munit.plugins.coverage.server" level="WARN"/>
+
+        <!-- MUnit Logger -->
+        <AsyncLogger name="com.mulesoft.munit" level="INFO"/>
+
+        <!-- Mule logger -->
+        <AsyncLogger name="org.mule.runtime.core.internal.processor.LoggerMessageProcessor" level="INFO"/>
+
+        <AsyncRoot level="INFO">
+            <AppenderRef ref="Console"/>
+        </AsyncRoot>
+    </Loggers>
+
+</Configuration>

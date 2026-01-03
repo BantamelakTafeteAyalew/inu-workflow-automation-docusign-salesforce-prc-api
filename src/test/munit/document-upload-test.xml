@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+	xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+		http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<munit:config name="document-upload-test-suite" doc:name="MUnit Configuration"/>
+
+	<!-- ============================================== -->
+	<!-- TEST: Document Upload Success                 -->
+	<!-- ============================================== -->
+
+	<munit:test name="document-upload-success-test" doc:name="Document Upload Success Test" description="Test successful document upload flow">
+		
+		<munit:behavior>
+			
+			<!-- Mock DMS HTTP Request -->
+			<munit-tools:mock-when processor="http:request" doc:name="Mock DMS Request">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute whereValue="DMS_HTTP_Request_Config" attributeName="config-ref"/>
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"status": "STORED", "dmsDocumentId": "DMS-12345"}]' mediaType="application/json"/>
+					<munit-tools:attributes value='#[{"statusCode": 201}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Mock OCR HTTP Request -->
+			<munit-tools:mock-when processor="http:request" doc:name="Mock OCR Request">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute whereValue="OCR_HTTP_Request_Config" attributeName="config-ref"/>
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"status": "PROCESSING", "jobId": "OCR-JOB-12345"}]' mediaType="application/json"/>
+					<munit-tools:attributes value='#[{"statusCode": 202}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Mock Salesforce Upsert -->
+			<munit-tools:mock-when processor="salesforce:upsert" doc:name="Mock Salesforce Upsert">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"items": [{"id": "a0B1234567890AB", "successful": true}]}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Mock Object Store -->
+			<munit-tools:mock-when processor="os:store" doc:name="Mock OS Store">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+
+			<!-- Set Test Event -->
+			<munit:set-event doc:name="Set Test Event">
+				<munit:payload value='#[%dw 2.0
+output multipart/form-data
+---
+{
+	parts: {
+		file: {
+			headers: {
+				"Content-Disposition": {
+					name: "file",
+					filename: "test-document.pdf"
+				},
+				"Content-Type": "application/pdf"
+			},
+			content: "PDF_CONTENT_BASE64"
+		},
+		metadata: {
+			headers: {
+				"Content-Disposition": {
+					name: "metadata"
+				},
+				"Content-Type": "application/json"
+			},
+			content: write({
+				documentType: "CLAIM_FORM",
+				sourceSystem: "MOBILE_APP",
+				referenceId: "CLM-902344",
+				metadata: {}
+			}, "application/json")
+		}
+	}
+}]' mediaType="multipart/form-data"/>
+				<munit:attributes value='#[{"headers": {"client_id": "test-client", "client_secret": "test-secret"}}]'/>
+				<munit:variables>
+					<munit:variable key="correlationId" value="test-correlation-id-001"/>
+				</munit:variables>
+			</munit:set-event>
+
+		</munit:behavior>
+
+		<munit:execution>
+			<flow-ref name="document-upload-flow" doc:name="Execute Document Upload Flow"/>
+		</munit:execution>
+
+		<munit:validation>
+			<!-- Assert Response Status -->
+			<munit-tools:assert-that doc:name="Assert HTTP Status 201" expression="#[vars.httpStatus]" is="#[MunitTools::equalTo(201)]"/>
+			
+			<!-- Assert Response Contains Document ID -->
+			<munit-tools:assert-that doc:name="Assert Document ID Present" expression="#[payload.documentId]" is="#[MunitTools::notNullValue()]"/>
+			
+			<!-- Assert Response Status -->
+			<munit-tools:assert-that doc:name="Assert Status RECEIVED" expression="#[payload.status]" is="#[MunitTools::equalTo('RECEIVED')]"/>
+		</munit:validation>
+
+	</munit:test>
+
+	<!-- ============================================== -->
+	<!-- TEST: Document Upload Validation Error        -->
+	<!-- ============================================== -->
+
+	<munit:test name="document-upload-validation-error-test" doc:name="Document Upload Validation Error Test" description="Test document upload with missing required fields" expectedErrorType="APP:VALIDATION_ERROR">
+		
+		<munit:behavior>
+			<!-- Set Test Event with Missing Document Type -->
+			<munit:set-event doc:name="Set Test Event">
+				<munit:payload value='#[%dw 2.0
+output multipart/form-data
+---
+{
+	parts: {
+		file: {
+			headers: {
+				"Content-Disposition": {
+					name: "file",
+					filename: "test-document.pdf"
+				},
+				"Content-Type": "application/pdf"
+			},
+			content: "PDF_CONTENT_BASE64"
+		},
+		metadata: {
+			headers: {
+				"Content-Disposition": {
+					name: "metadata"
+				},
+				"Content-Type": "application/json"
+			},
+			content: write({
+				sourceSystem: "MOBILE_APP",
+				referenceId: "CLM-902344"
+			}, "application/json")
+		}
+	}
+}]' mediaType="multipart/form-data"/>
+				<munit:attributes value='#[{"headers": {"client_id": "test-client", "client_secret": "test-secret"}}]'/>
+				<munit:variables>
+					<munit:variable key="correlationId" value="test-correlation-id-002"/>
+				</munit:variables>
+			</munit:set-event>
+		</munit:behavior>
+
+		<munit:execution>
+			<flow-ref name="document-upload-flow" doc:name="Execute Document Upload Flow"/>
+		</munit:execution>
+
+	</munit:test>
+
+	<!-- ============================================== -->
+	<!-- TEST: Document Status Retrieval Success       -->
+	<!-- ============================================== -->
+
+	<munit:test name="document-status-success-test" doc:name="Document Status Success Test" description="Test successful document status retrieval">
+		
+		<munit:behavior>
+			
+			<!-- Mock Object Store Retrieve -->
+			<munit-tools:mock-when processor="os:retrieve" doc:name="Mock OS Retrieve">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{
+						"documentId": "DOC-12345678",
+						"documentType": "CLAIM_FORM",
+						"classification": "AUTO_CLAIM_ESTIMATE",
+						"ocrStatus": "COMPLETED",
+						"processingStatus": "READY_FOR_RULES"
+					}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Set Test Event -->
+			<munit:set-event doc:name="Set Test Event">
+				<munit:payload value='#[null]'/>
+				<munit:attributes value='#[{
+					"uriParams": {"documentId": "DOC-12345678"},
+					"headers": {"client_id": "test-client", "client_secret": "test-secret"}
+				}]'/>
+				<munit:variables>
+					<munit:variable key="correlationId" value="test-correlation-id-003"/>
+				</munit:variables>
+			</munit:set-event>
+
+		</munit:behavior>
+
+		<munit:execution>
+			<flow-ref name="document-status-flow" doc:name="Execute Document Status Flow"/>
+		</munit:execution>
+
+		<munit:validation>
+			<!-- Assert Response Status -->
+			<munit-tools:assert-that doc:name="Assert HTTP Status 200" expression="#[vars.httpStatus]" is="#[MunitTools::equalTo(200)]"/>
+			
+			<!-- Assert Response Contains Document ID -->
+			<munit-tools:assert-that doc:name="Assert Document ID" expression="#[payload.documentId]" is="#[MunitTools::equalTo('DOC-12345678')]"/>
+			
+			<!-- Assert OCR Status -->
+			<munit-tools:assert-that doc:name="Assert OCR Status" expression="#[payload.ocrStatus]" is="#[MunitTools::equalTo('COMPLETED')]"/>
+		</munit:validation>
+
+	</munit:test>
+
+	<!-- ============================================== -->
+	<!-- TEST: Document Status Not Found               -->
+	<!-- ============================================== -->
+
+	<munit:test name="document-status-not-found-test" doc:name="Document Status Not Found Test" description="Test document status retrieval for non-existent document" expectedErrorType="APP:RESOURCE_NOT_FOUND">
+		
+		<munit:behavior>
+			
+			<!-- Mock Object Store Retrieve returning null -->
+			<munit-tools:mock-when processor="os:retrieve" doc:name="Mock OS Retrieve">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[null]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Set Test Event -->
+			<munit:set-event doc:name="Set Test Event">
+				<munit:payload value='#[null]'/>
+				<munit:attributes value='#[{
+					"uriParams": {"documentId": "DOC-NONEXISTENT"},
+					"headers": {"client_id": "test-client", "client_secret": "test-secret"}
+				}]'/>
+				<munit:variables>
+					<munit:variable key="correlationId" value="test-correlation-id-004"/>
+				</munit:variables>
+			</munit:set-event>
+
+		</munit:behavior>
+
+		<munit:execution>
+			<flow-ref name="document-status-flow" doc:name="Execute Document Status Flow"/>
+		</munit:execution>
+
+	</munit:test>
+
+</mule>

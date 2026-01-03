@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+	<!-- ============================================== -->
+	<!-- RULE EVALUATION FLOW                          -->
+	<!-- Executes insurance rules against document data-->
+	<!-- ============================================== -->
+
+	<flow name="rule-evaluation-flow" doc:name="Rule Evaluation Flow">
+		
+		<!-- Store Original Request -->
+		<set-variable variableName="ruleRequest" value="#[payload]" doc:name="Store Rule Request"/>
+
+		<!-- Validate Request -->
+		<flow-ref name="validate-rule-evaluation-request-subflow" doc:name="Validate Request"/>
+
+		<!-- Extract Request Data -->
+		<ee:transform doc:name="Extract Request Data">
+			<ee:variables>
+				<ee:set-variable variableName="documentId"><![CDATA[%dw 2.0
+output application/java
+---
+vars.ruleRequest.documentId]]></ee:set-variable>
+				<ee:set-variable variableName="ruleSet"><![CDATA[%dw 2.0
+output application/java
+---
+vars.ruleRequest.ruleSet]]></ee:set-variable>
+				<ee:set-variable variableName="ruleContext"><![CDATA[%dw 2.0
+output application/java
+---
+vars.ruleRequest.context default {}]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+
+		<!-- Log Business Event -->
+		<set-variable variableName="eventType" value="RULE_EVALUATION_STARTED" doc:name="Set Event Type"/>
+		<set-variable variableName="eventDetails" value='#[{"documentId": vars.documentId, "ruleSet": vars.ruleSet}]' doc:name="Set Event Details"/>
+		<flow-ref name="log-business-event-subflow" doc:name="Log Business Event"/>
+
+		<!-- Retrieve Document State -->
+		<os:retrieve key="#[vars.documentId]" objectStore="Document_Object_Store" target="documentState" doc:name="Retrieve Document State">
+			<os:default-value><![CDATA[#[null]]]></os:default-value>
+		</os:retrieve>
+
+		<!-- Check if Document Exists -->
+		<choice doc:name="Document Exists?">
+			<when expression="#[vars.documentState == null]">
+				<raise-error type="APP:RESOURCE_NOT_FOUND" description='#["Document not found: " ++ vars.documentId]' doc:name="Raise Not Found Error"/>
+			</when>
+		</choice>
+
+		<!-- Call Rules Engine -->
+		<flow-ref name="execute-rules-engine-subflow" doc:name="Execute Rules Engine"/>
+
+		<!-- Update Document State -->
+		<flow-ref name="update-document-state-after-rules-subflow" doc:name="Update Document State"/>
+
+		<!-- Update Salesforce with Rule Results -->
+		<flow-ref name="sf-update-rule-results-subflow" doc:name="Update SF Rule Results"/>
+
+		<!-- Build Response -->
+		<ee:transform doc:name="Build Rule Response">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	decision: vars.ruleDecision,
+	confidenceScore: vars.confidenceScore,
+	reasons: vars.ruleReasons default []
+}]]></ee:set-payload>
+			</ee:message>
+			<ee:variables>
+				<ee:set-variable variableName="httpStatus"><![CDATA[200]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+
+	</flow>
+
+	<!-- ============================================== -->
+	<!-- RULES ENGINE INTEGRATION SUBFLOW              -->
+	<!-- ============================================== -->
+
+	<sub-flow name="execute-rules-engine-subflow" doc:name="Execute Rules Engine Subflow">
+		
+		<!-- Set External Request Context -->
+		<set-variable variableName="targetSystem" value="RULES_ENGINE" doc:name="Set Target System"/>
+		<set-variable variableName="operation" value="EVALUATE_RULES" doc:name="Set Operation"/>
+		<flow-ref name="log-external-request-subflow" doc:name="Log External Request"/>
+		<flow-ref name="propagate-correlation-id-subflow" doc:name="Propagate Correlation ID"/>
+
+		<!-- Build Rules Engine Request -->
+		<ee:transform doc:name="Build Rules Request">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var docState = vars.documentState
+---
+{
+	ruleSet: vars.ruleSet,
+	document: {
+		documentId: vars.documentId,
+		documentType: docState.documentType,
+		classification: docState.classification,
+		ocrData: docState.ocrData default {}
+	},
+	context: vars.ruleContext,
+	evaluationOptions: {
+		returnReasons: true,
+		returnConfidenceScore: true
+	}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+		<!-- Call Rules Engine API -->
+		<http:request method="POST" config-ref="Rules_HTTP_Request_Config" path="${rules.basePath}/evaluate" doc:name="Evaluate Rules">
+			<http:headers><![CDATA[#[vars.correlationHeaders]]]></http:headers>
+		</http:request>
+
+		<!-- Store Rules Response -->
+		<ee:transform doc:name="Extract Rule Results">
+			<ee:variables>
+				<ee:set-variable variableName="ruleDecision"><![CDATA[%dw 2.0
+output application/java
+---
+payload.decision default "APPROVAL_REQUIRED"]]></ee:set-variable>
+				<ee:set-variable variableName="confidenceScore"><![CDATA[%dw 2.0
+output application/java
+---
+payload.confidenceScore default 0.0]]></ee:set-variable>
+				<ee:set-variable variableName="ruleReasons"><![CDATA[%dw 2.0
+output application/java
+---
+payload.reasons default []]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+
+		<flow-ref name="log-external-response-subflow" doc:name="Log External Response"/>
+
+	</sub-flow>
+
+	<!-- ============================================== -->
+	<!-- UPDATE DOCUMENT STATE AFTER RULES SUBFLOW     -->
+	<!-- ============================================== -->
+
+	<sub-flow name="update-document-state-after-rules-subflow" doc:name="Update Document State After Rules Subflow">
+		
+		<!-- Build Updated Document State -->
+		<ee:transform doc:name="Build Updated State">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var docState = vars.documentState
+---
+docState ++ {
+	processingStatus: "RULES_EVALUATED",
+	ruleDecision: vars.ruleDecision,
+	confidenceScore: vars.confidenceScore,
+	ruleReasons: vars.ruleReasons,
+	lastUpdatedTimestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+		<!-- Update Object Store -->
+		<os:store key="#[vars.documentId]" objectStore="Document_Object_Store" doc:name="Update Document State">
+			<os:value><![CDATA[#[payload]]]></os:value>
+		</os:store>
+
+		<!-- Update documentState variable -->
+		<set-variable variableName="documentState" value="#[payload]" doc:name="Update Document State Variable"/>
+
+	</sub-flow>
+
+	<!-- ============================================== -->
+	<!-- SALESFORCE RULE RESULTS UPDATE SUBFLOW        -->
+	<!-- ============================================== -->
+
+	<sub-flow name="sf-update-rule-results-subflow" doc:name="Update SF Rule Results Subflow">
+		
+		<!-- Set External Request Context -->
+		<set-variable variableName="targetSystem" value="SALESFORCE" doc:name="Set Target System"/>
+		<set-variable variableName="operation" value="UPDATE_RULE_RESULTS" doc:name="Set Operation"/>
+		<flow-ref name="log-external-request-subflow" doc:name="Log External Request"/>
+
+		<!-- Build Salesforce Update Record -->
+		<ee:transform doc:name="Build SF Update Record">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+[{
+	"Document_ID__c": vars.documentId,
+	"Processing_Status__c": "RULES_EVALUATED",
+	"Rule_Decision__c": vars.ruleDecision,
+	"Confidence_Score__c": vars.confidenceScore,
+	"Rule_Reasons__c": (vars.ruleReasons default []) joinBy "; "
+}]]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+		<!-- Upsert to Salesforce -->
+		<flow-ref name="sf-upsert-process-record-flow" doc:name="Upsert to Salesforce"/>
+
+	</sub-flow>
+
+</mule>

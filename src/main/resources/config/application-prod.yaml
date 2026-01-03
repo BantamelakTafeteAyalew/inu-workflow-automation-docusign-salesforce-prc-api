@@ -1,0 +1,37 @@
+# Production Environment Configuration
+
+http:
+  listener:
+    host: "0.0.0.0"
+    port: "8081"
+    basePath: "/api/v1"
+
+api:
+  id: "prod-api-id-12345"
+
+# Document Management System (DMS)
+dms:
+  host: "dms.insurance-corp.com"
+
+# OCR & Document Classification System
+ocr:
+  host: "ocr.insurance-corp.com"
+
+# Rules Engine
+rules:
+  host: "rules.insurance-corp.com"
+
+# Workflow Engine
+workflow:
+  host: "workflow.insurance-corp.com"
+
+# DocuSign Configuration
+docusign:
+  host: "na4.docusign.net"
+  account:
+    id: "prod-account-id"
+
+# Salesforce Configuration
+salesforce:
+  username: "integration-user@insurance-corp.com"
+  authorizationUrl: "https://login.salesforce.com/services/Soap/u/60.0"

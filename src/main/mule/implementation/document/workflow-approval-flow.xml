@@ -1,0 +1,216 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+	<!-- ============================================== -->
+	<!-- WORKFLOW APPROVAL FLOW                        -->
+	<!-- Handles approval decisions and triggers       -->
+	<!-- DocuSign for approved workflows               -->
+	<!-- ============================================== -->
+
+	<flow name="workflow-approval-flow" doc:name="Workflow Approval Flow">
+		
+		<!-- Store Original Request -->
+		<set-variable variableName="approvalRequest" value="#[payload]" doc:name="Store Approval Request"/>
+
+		<!-- Extract Workflow ID from URI -->
+		<set-variable variableName="workflowId" value="#[attributes.uriParams.workflowId]" doc:name="Extract Workflow ID"/>
+
+		<!-- Validate Request -->
+		<flow-ref name="validate-approval-decision-subflow" doc:name="Validate Request"/>
+
+		<!-- Extract Request Data -->
+		<ee:transform doc:name="Extract Request Data">
+			<ee:variables>
+				<ee:set-variable variableName="decision"><![CDATA[%dw 2.0
+output application/java
+---
+vars.approvalRequest.decision]]></ee:set-variable>
+				<ee:set-variable variableName="actor"><![CDATA[%dw 2.0
+output application/java
+---
+vars.approvalRequest.actor]]></ee:set-variable>
+				<ee:set-variable variableName="comments"><![CDATA[%dw 2.0
+output application/java
+---
+vars.approvalRequest.comments default ""]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+
+		<!-- Log Business Event -->
+		<set-variable variableName="eventType" value="APPROVAL_DECISION_RECEIVED" doc:name="Set Event Type"/>
+		<set-variable variableName="eventDetails" value='#[{"workflowId": vars.workflowId, "decision": vars.decision, "actor": vars.actor}]' doc:name="Set Event Details"/>
+		<flow-ref name="log-business-event-subflow" doc:name="Log Business Event"/>
+
+		<!-- Retrieve Workflow State -->
+		<os:retrieve key="#[vars.workflowId]" objectStore="Workflow_Object_Store" target="workflowState" doc:name="Retrieve Workflow State">
+			<os:default-value><![CDATA[#[null]]]></os:default-value>
+		</os:retrieve>
+
+		<!-- Check if Workflow Exists -->
+		<choice doc:name="Workflow Exists?">
+			<when expression="#[vars.workflowState == null]">
+				<raise-error type="APP:RESOURCE_NOT_FOUND" description='#["Workflow not found: " ++ vars.workflowId]' doc:name="Raise Not Found Error"/>
+			</when>
+		</choice>
+
+		<!-- Update External Workflow System -->
+		<flow-ref name="update-external-workflow-subflow" doc:name="Update External Workflow"/>
+
+		<!-- Process Based on Decision -->
+		<choice doc:name="Process Decision">
+			<when expression='#[vars.decision == "APPROVED"]'>
+				<!-- Trigger DocuSign for Approved Workflows -->
+				<flow-ref name="docusign-envelope-create-flow" doc:name="Create DocuSign Envelope"/>
+				<set-variable variableName="workflowStatus" value="APPROVED_PENDING_SIGNATURE" doc:name="Set Status"/>
+			</when>
+			<when expression='#[vars.decision == "REJECTED"]'>
+				<set-variable variableName="workflowStatus" value="REJECTED" doc:name="Set Status"/>
+			</when>
+			<otherwise>
+				<set-variable variableName="workflowStatus" value="MORE_INFO_REQUIRED" doc:name="Set Status"/>
+			</otherwise>
+		</choice>
+
+		<!-- Update Workflow State -->
+		<flow-ref name="update-workflow-state-after-approval-subflow" doc:name="Update Workflow State"/>
+
+		<!-- Update Salesforce with Approval Decision -->
+		<flow-ref name="sf-update-approval-decision-subflow" doc:name="Update SF Approval Decision"/>
+
+		<!-- Build Response -->
+		<ee:transform doc:name="Build Approval Response">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	workflowId: vars.workflowId,
+	status: vars.workflowStatus
+}]]></ee:set-payload>
+			</ee:message>
+			<ee:variables>
+				<ee:set-variable variableName="httpStatus"><![CDATA[200]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+
+	</flow>
+
+	<!-- ============================================== -->
+	<!-- UPDATE EXTERNAL WORKFLOW SUBFLOW              -->
+	<!-- ============================================== -->
+
+	<sub-flow name="update-external-workflow-subflow" doc:name="Update External Workflow Subflow">
+		
+		<!-- Set External Request Context -->
+		<set-variable variableName="targetSystem" value="WORKFLOW_ENGINE" doc:name="Set Target System"/>
+		<set-variable variableName="operation" value="UPDATE_WORKFLOW" doc:name="Set Operation"/>
+		<flow-ref name="log-external-request-subflow" doc:name="Log External Request"/>
+		<flow-ref name="propagate-correlation-id-subflow" doc:name="Propagate Correlation ID"/>
+
+		<!-- Build Workflow Update Request -->
+		<ee:transform doc:name="Build Workflow Update">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	externalWorkflowId: vars.workflowId,
+	decision: vars.decision,
+	actor: vars.actor,
+	comments: vars.comments,
+	decisionTimestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+		<!-- Call Workflow Engine API -->
+		<http:request method="PUT" config-ref="Workflow_HTTP_Request_Config" path='#["${workflow.basePath}/" ++ vars.workflowId ++ "/decision"]' doc:name="Update Workflow">
+			<http:headers><![CDATA[#[vars.correlationHeaders]]]></http:headers>
+		</http:request>
+
+		<flow-ref name="log-external-response-subflow" doc:name="Log External Response"/>
+
+	</sub-flow>
+
+	<!-- ============================================== -->
+	<!-- UPDATE WORKFLOW STATE AFTER APPROVAL SUBFLOW  -->
+	<!-- ============================================== -->
+
+	<sub-flow name="update-workflow-state-after-approval-subflow" doc:name="Update Workflow State After Approval Subflow">
+		
+		<!-- Build Updated Workflow State -->
+		<ee:transform doc:name="Build Updated State">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var wfState = vars.workflowState
+---
+wfState ++ {
+	status: vars.workflowStatus,
+	approvalDecision: vars.decision,
+	approvalActor: vars.actor,
+	approvalComments: vars.comments,
+	approvalTimestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	docuSignEnvelopeId: vars.envelopeId default null,
+	docuSignStatus: if (vars.decision == "APPROVED") "SENT" else null,
+	lastUpdatedTimestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+		<!-- Update Object Store -->
+		<os:store key="#[vars.workflowId]" objectStore="Workflow_Object_Store" doc:name="Update Workflow State">
+			<os:value><![CDATA[#[payload]]]></os:value>
+		</os:store>
+
+		<!-- Update workflowState variable -->
+		<set-variable variableName="workflowState" value="#[payload]" doc:name="Update Workflow State Variable"/>
+
+	</sub-flow>
+
+	<!-- ============================================== -->
+	<!-- SALESFORCE APPROVAL DECISION UPDATE SUBFLOW   -->
+	<!-- ============================================== -->
+
+	<sub-flow name="sf-update-approval-decision-subflow" doc:name="Update SF Approval Decision Subflow">
+		
+		<!-- Set External Request Context -->
+		<set-variable variableName="targetSystem" value="SALESFORCE" doc:name="Set Target System"/>
+		<set-variable variableName="operation" value="UPDATE_APPROVAL_DECISION" doc:name="Set Operation"/>
+		<flow-ref name="log-external-request-subflow" doc:name="Log External Request"/>
+
+		<!-- Build Salesforce Update Record -->
+		<ee:transform doc:name="Build SF Update Record">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+[{
+	"Workflow_ID__c": vars.workflowId,
+	"Status__c": vars.workflowStatus,
+	"Approval_Decision__c": vars.decision,
+	"Approval_Actor__c": vars.actor,
+	"Approval_Comments__c": vars.comments,
+	"DocuSign_Envelope_ID__c": vars.envelopeId default null,
+	"DocuSign_Status__c": if (vars.decision == "APPROVED") "SENT" else null
+}]]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+		<!-- Upsert to Salesforce -->
+		<flow-ref name="sf-upsert-process-record-flow" doc:name="Upsert to Salesforce"/>
+
+	</sub-flow>
+
+</mule>

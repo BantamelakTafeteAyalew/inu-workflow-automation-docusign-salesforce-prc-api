@@ -1,0 +1,5 @@
+{
+  "minMuleVersion": "4.9.3",
+  "javaSpecificationVersions": ["17"],
+  "secureProperties": ["encryption.key", "sfdc.password", "sfdc.token", "docusign.client.secret", "docusign.private.key"]
+}

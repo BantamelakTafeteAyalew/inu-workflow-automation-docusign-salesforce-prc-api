@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+	<!-- ============================================== -->
+	<!-- DOCUSIGN ENVELOPE CREATE FLOW                 -->
+	<!-- Creates DocuSign envelopes for approved       -->
+	<!-- insurance documents requiring signatures      -->
+	<!-- ============================================== -->
+
+	<flow name="docusign-envelope-create-flow" doc:name="DocuSign Envelope Create Flow">
+		
+		<!-- Log Business Event -->
+		<set-variable variableName="eventType" value="DOCUSIGN_ENVELOPE_CREATION_STARTED" doc:name="Set Event Type"/>
+		<set-variable variableName="eventDetails" value='#[{"workflowId": vars.workflowId, "referenceId": vars.workflowState.referenceId}]' doc:name="Set Event Details"/>
+		<flow-ref name="log-business-event-subflow" doc:name="Log Business Event"/>
+
+		<!-- Get DocuSign Access Token -->
+		<flow-ref name="get-docusign-access-token-subflow" doc:name="Get Access Token"/>
+
+		<!-- Build DocuSign Envelope Request -->
+		<flow-ref name="build-docusign-envelope-subflow" doc:name="Build Envelope Request"/>
+
+		<!-- Create Envelope in DocuSign -->
+		<flow-ref name="create-docusign-envelope-subflow" doc:name="Create Envelope"/>
+
+		<!-- Store Envelope Tracking Info -->
+		<flow-ref name="store-docusign-envelope-state-subflow" doc:name="Store Envelope State"/>
+
+		<!-- Log Business Event -->
+		<set-variable variableName="eventType" value="DOCUSIGN_ENVELOPE_CREATED" doc:name="Set Event Type"/>
+		<set-variable variableName="eventDetails" value='#[{"workflowId": vars.workflowId, "envelopeId": vars.envelopeId}]' doc:name="Set Event Details"/>
+		<flow-ref name="log-business-event-subflow" doc:name="Log Business Event"/>
+
+	</flow>
+
+	<!-- ============================================== -->
+	<!-- GET DOCUSIGN ACCESS TOKEN SUBFLOW             -->
+	<!-- ============================================== -->
+
+	<sub-flow name="get-docusign-access-token-subflow" doc:name="Get DocuSign Access Token Subflow">
+		
+		<!-- Set External Request Context -->
+		<set-variable variableName="targetSystem" value="DOCUSIGN" doc:name="Set Target System"/>
+		<set-variable variableName="operation" value="GET_ACCESS_TOKEN" doc:name="Set Operation"/>
+		<flow-ref name="log-external-request-subflow" doc:name="Log External Request"/>
+
+		<!-- Build JWT Grant Request -->
+		<ee:transform doc:name="Build Token Request">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/x-www-form-urlencoded
+---
+{
+	grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+	assertion: vars.jwtAssertion default "JWT_ASSERTION_PLACEHOLDER"
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+		<!-- Call DocuSign OAuth Endpoint -->
+		<http:request method="POST" config-ref="DocuSign_HTTP_Request_Config" path="/oauth/token" doc:name="Get Access Token">
+			<http:headers><![CDATA[#[{
+	"Content-Type": "application/x-www-form-urlencoded"
+}]]]></http:headers>
+		</http:request>
+
+		<!-- Store Access Token -->
+		<ee:transform doc:name="Extract Access Token">
+			<ee:variables>
+				<ee:set-variable variableName="docuSignAccessToken"><![CDATA[%dw 2.0
+output application/java
+---
+payload.access_token default ""]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+
+		<flow-ref name="log-external-response-subflow" doc:name="Log External Response"/>
+
+	</sub-flow>
+
+	<!-- ============================================== -->
+	<!-- BUILD DOCUSIGN ENVELOPE SUBFLOW               -->
+	<!-- ============================================== -->
+
+	<sub-flow name="build-docusign-envelope-subflow" doc:name="Build DocuSign Envelope Subflow">
+		
+		<!-- Build Envelope Definition -->
+		<ee:transform doc:name="Build Envelope Definition">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var wfState = vars.workflowState
+---
+{
+	emailSubject: "Insurance Document Requiring Signature - " ++ (wfState.referenceId default "N/A"),
+	emailBlurb: "Please review and sign the attached insurance document.",
+	status: "sent",
+	documents: [
+		{
+			documentId: "1",
+			name: "Insurance Document - " ++ (wfState.workflowType default "Document"),
+			fileExtension: "pdf",
+			documentBase64: vars.documentContent default "BASE64_DOCUMENT_PLACEHOLDER"
+		}
+	],
+	recipients: {
+		signers: [
+			{
+				email: vars.signerEmail default "signer@insurance-corp.com",
+				name: vars.signerName default "Insurance Signer",
+				recipientId: "1",
+				routingOrder: "1",
+				tabs: {
+					signHereTabs: [
+						{
+							anchorString: "/sig1/",
+							anchorUnits: "pixels",
+							anchorXOffset: "0",
+							anchorYOffset: "0"
+						}
+					],
+					dateSignedTabs: [
+						{
+							anchorString: "/date1/",
+							anchorUnits: "pixels",
+							anchorXOffset: "0",
+							anchorYOffset: "0"
+						}
+					]
+				}
+			}
+		]
+	},
+	eventNotification: {
+		url: p('http.listener.host') ++ ":" ++ p('http.listener.port') ++ p('http.listener.basePath') ++ "/internal/docusign-callback",
+		loggingEnabled: "true",
+		requireAcknowledgment: "true",
+		envelopeEvents: [
+			{ envelopeEventStatusCode: "completed" },
+			{ envelopeEventStatusCode: "declined" },
+			{ envelopeEventStatusCode: "voided" }
+		]
+	},
+	customFields: {
+		textCustomFields: [
+			{
+				name: "workflowId",
+				value: vars.workflowId,
+				show: "false"
+			},
+			{
+				name: "correlationId",
+				value: vars.correlationId,
+				show: "false"
+			}
+		]
+	}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+		<!-- Store Envelope Request -->
+		<set-variable variableName="envelopeRequest" value="#[payload]" doc:name="Store Envelope Request"/>
+
+	</sub-flow>
+
+	<!-- ============================================== -->
+	<!-- CREATE DOCUSIGN ENVELOPE SUBFLOW              -->
+	<!-- ============================================== -->
+
+	<sub-flow name="create-docusign-envelope-subflow" doc:name="Create DocuSign Envelope Subflow">
+		
+		<!-- Set External Request Context -->
+		<set-variable variableName="targetSystem" value="DOCUSIGN" doc:name="Set Target System"/>
+		<set-variable variableName="operation" value="CREATE_ENVELOPE" doc:name="Set Operation"/>
+		<flow-ref name="log-external-request-subflow" doc:name="Log External Request"/>
+		<flow-ref name="propagate-correlation-id-subflow" doc:name="Propagate Correlation ID"/>
+
+		<!-- Set Envelope Request as Payload -->
+		<set-payload value="#[vars.envelopeRequest]" doc:name="Set Envelope Request"/>
+
+		<!-- Call DocuSign Envelopes API -->
+		<http:request method="POST" config-ref="DocuSign_HTTP_Request_Config" path='#["${docusign.basePath}/accounts/" ++ p("docusign.accountId") ++ "/envelopes"]' doc:name="Create Envelope">
+			<http:headers><![CDATA[#[vars.correlationHeaders ++ {
+	"Authorization": "Bearer " ++ vars.docuSignAccessToken,
+	"Content-Type": "application/json"
+}]]]></http:headers>
+		</http:request>
+
+		<!-- Extract Envelope ID -->
+		<ee:transform doc:name="Extract Envelope ID">
+			<ee:variables>
+				<ee:set-variable variableName="envelopeId"><![CDATA[%dw 2.0
+output application/java
+---
+payload.envelopeId default ""]]></ee:set-variable>
+				<ee:set-variable variableName="envelopeStatus"><![CDATA[%dw 2.0
+output application/java
+---
+payload.status default "sent"]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+
+		<flow-ref name="log-external-response-subflow" doc:name="Log External Response"/>
+
+		<!-- Validate Envelope Creation -->
+		<choice doc:name="Envelope Created?">
+			<when expression="#[isEmpty(vars.envelopeId)]">
+				<raise-error type="APP:DOCUSIGN_ERROR" description="Failed to create DocuSign envelope" doc:name="Raise DocuSign Error"/>
+			</when>
+		</choice>
+
+	</sub-flow>
+
+	<!-- ============================================== -->
+	<!-- STORE DOCUSIGN ENVELOPE STATE SUBFLOW         -->
+	<!-- ============================================== -->
+
+	<sub-flow name="store-docusign-envelope-state-subflow" doc:name="Store DocuSign Envelope State Subflow">
+		
+		<!-- Build Envelope State Object -->
+		<ee:transform doc:name="Build Envelope State">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	envelopeId: vars.envelopeId,
+	workflowId: vars.workflowId,
+	referenceId: vars.workflowState.referenceId,
+	status: vars.envelopeStatus,
+	createdTimestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	lastUpdatedTimestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	correlationId: vars.correlationId
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+		<!-- Store in Object Store -->
+		<os:store key="#[vars.envelopeId]" objectStore="DocuSign_Object_Store" doc:name="Store Envelope State">
+			<os:value><![CDATA[#[payload]]]></os:value>
+		</os:store>
+
+	</sub-flow>
+
+</mule>

@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<!-- ============================================== -->
+	<!-- VALIDATION SUBFLOWS                           -->
+	<!-- Centralized input validation logic            -->
+	<!-- ============================================== -->
+
+	<sub-flow name="validate-client-credentials-subflow" doc:name="Validate Client Credentials Subflow">
+		<choice doc:name="Check Client Credentials">
+			<when expression="#[isEmpty(attributes.headers.client_id) or isEmpty(attributes.headers.client_secret)]">
+				<raise-error type="CLIENT-SECURITY:UNAUTHORIZED" description="Missing client_id or client_secret header" doc:name="Raise Unauthorized Error"/>
+			</when>
+		</choice>
+	</sub-flow>
+
+	<sub-flow name="validate-document-upload-request-subflow" doc:name="Validate Document Upload Request Subflow">
+		<choice doc:name="Validate Required Fields">
+			<when expression="#[isEmpty(vars.documentType)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="documentType is required" doc:name="Raise Validation Error"/>
+			</when>
+			<when expression="#[isEmpty(vars.sourceSystem)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="sourceSystem is required" doc:name="Raise Validation Error"/>
+			</when>
+			<when expression="#[isEmpty(vars.referenceId)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="referenceId is required" doc:name="Raise Validation Error"/>
+			</when>
+		</choice>
+	</sub-flow>
+
+	<sub-flow name="validate-rule-evaluation-request-subflow" doc:name="Validate Rule Evaluation Request Subflow">
+		<choice doc:name="Validate Required Fields">
+			<when expression="#[isEmpty(payload.documentId)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="documentId is required" doc:name="Raise Validation Error"/>
+			</when>
+			<when expression="#[isEmpty(payload.ruleSet)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="ruleSet is required" doc:name="Raise Validation Error"/>
+			</when>
+		</choice>
+	</sub-flow>
+
+	<sub-flow name="validate-workflow-request-subflow" doc:name="Validate Workflow Request Subflow">
+		<choice doc:name="Validate Required Fields">
+			<when expression="#[isEmpty(payload.workflowType)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="workflowType is required" doc:name="Raise Validation Error"/>
+			</when>
+			<when expression="#[isEmpty(payload.referenceId)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="referenceId is required" doc:name="Raise Validation Error"/>
+			</when>
+		</choice>
+	</sub-flow>
+
+	<sub-flow name="validate-approval-decision-subflow" doc:name="Validate Approval Decision Subflow">
+		<choice doc:name="Validate Required Fields">
+			<when expression="#[isEmpty(payload.decision)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="decision is required" doc:name="Raise Validation Error"/>
+			</when>
+			<when expression="#[!(payload.decision default '' == 'APPROVED' or payload.decision default '' == 'REJECTED' or payload.decision default '' == 'MORE_INFO_REQUIRED')]">
+				<raise-error type="APP:VALIDATION_ERROR" description="decision must be one of: APPROVED, REJECTED, MORE_INFO_REQUIRED" doc:name="Raise Validation Error"/>
+			</when>
+			<when expression="#[isEmpty(payload.actor)]">
+				<raise-error type="APP:VALIDATION_ERROR" description="actor is required" doc:name="Raise Validation Error"/>
+			</when>
+		</choice>
+	</sub-flow>
+
+</mule>

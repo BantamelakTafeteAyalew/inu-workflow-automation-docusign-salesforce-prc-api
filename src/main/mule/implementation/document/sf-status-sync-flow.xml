@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:salesforce="http://www.mulesoft.org/schema/mule/salesforce"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+	<!-- ============================================== -->
+	<!-- SALESFORCE STATUS SYNC FLOW                   -->
+	<!-- Synchronizes status between Object Store      -->
+	<!-- and Salesforce for process visibility         -->
+	<!-- ============================================== -->
+
+	<flow name="sf-status-sync-flow" doc:name="SF Status Sync Flow">
+		
+		<!-- This flow can be triggered by a scheduler or on-demand -->
+		<!-- to sync status between local state and Salesforce -->
+
+		<!-- Log Business Event -->
+		<set-variable variableName="eventType" value="STATUS_SYNC_STARTED" doc:name="Set Event Type"/>
+		<set-variable variableName="eventDetails" value='#[{"syncType": vars.syncType default "FULL"}]' doc:name="Set Event Details"/>
+		<flow-ref name="log-business-event-subflow" doc:name="Log Business Event"/>
+
+		<!-- Determine Sync Type -->
+		<choice doc:name="Sync Type">
+			<when expression='#[vars.syncType == "DOCUMENT"]'>
+				<flow-ref name="sync-document-status-subflow" doc:name="Sync Document Status"/>
+			</when>
+			<when expression='#[vars.syncType == "WORKFLOW"]'>
+				<flow-ref name="sync-workflow-status-subflow" doc:name="Sync Workflow Status"/>
+			</when>
+			<otherwise>
+				<!-- Full Sync -->
+				<flow-ref name="sync-document-status-subflow" doc:name="Sync Document Status"/>
+				<flow-ref name="sync-workflow-status-subflow" doc:name="Sync Workflow Status"/>
+			</otherwise>
+		</choice>
+
+		<!-- Log Business Event -->
+		<set-variable variableName="eventType" value="STATUS_SYNC_COMPLETED" doc:name="Set Event Type"/>
+		<set-variable variableName="eventDetails" value='#[{"syncType": vars.syncType default "FULL", "documentsProcessed": vars.documentsProcessed default 0, "workflowsProcessed": vars.workflowsProcessed default 0}]' doc:name="Set Event Details"/>
+		<flow-ref name="log-business-event-subflow" doc:name="Log Business Event"/>
+
+		<!-- Build Response -->
+		<ee:transform doc:name="Build Sync Response">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	status: "COMPLETED",
+	syncType: vars.syncType default "FULL",
+	documentsProcessed: vars.documentsProcessed default 0,
+	workflowsProcessed: vars.workflowsProcessed default 0,
+	timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+	</flow>
+
+	<!-- ============================================== -->
+	<!-- SYNC DOCUMENT STATUS SUBFLOW                  -->
+	<!-- ============================================== -->
+
+	<sub-flow name="sync-document-status-subflow" doc:name="Sync Document Status Subflow">
+		
+		<!-- Query Salesforce for Documents needing sync -->
+		<set-variable variableName="sfQuery" value="SELECT Document_ID__c, Status__c, Processing_Status__c FROM Insurance_Document__c WHERE Last_Sync_Timestamp__c = null OR Last_Sync_Timestamp__c &lt; LAST_N_HOURS:1" doc:name="Set Query"/>
+		<flow-ref name="sf-query-records-flow" doc:name="Query Documents"/>
+
+		<!-- Process Each Document -->
+		<foreach collection="#[vars.sfQueryResults default []]" doc:name="For Each Document">
+			
+			<!-- Retrieve Local State -->
+			<os:retrieve key="#[payload.Document_ID__c]" objectStore="Document_Object_Store" target="localDocState" doc:name="Retrieve Local State">
+				<os:default-value><![CDATA[#[null]]]></os:default-value>
+			</os:retrieve>
+
+			<!-- Update Salesforce if Local State Differs -->
+			<choice doc:name="State Differs?">
+				<when expression="#[vars.localDocState != null and vars.localDocState.status != payload.Status__c]">
+					
+					<!-- Build Update Record -->
+					<ee:transform doc:name="Build Update Record">
+						<ee:message>
+							<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+[{
+	"Document_ID__c": vars.localDocState.documentId,
+	"Status__c": vars.localDocState.status,
+	"Processing_Status__c": vars.localDocState.processingStatus,
+	"OCR_Status__c": vars.localDocState.ocrStatus,
+	"Classification__c": vars.localDocState.classification,
+	"Last_Sync_Timestamp__c": now()
+}]]]></ee:set-payload>
+						</ee:message>
+					</ee:transform>
+
+					<!-- Upsert to Salesforce -->
+					<flow-ref name="sf-upsert-process-record-flow" doc:name="Upsert Document"/>
+
+				</when>
+			</choice>
+
+		</foreach>
+
+		<!-- Set Documents Processed Count -->
+		<set-variable variableName="documentsProcessed" value="#[sizeOf(vars.sfQueryResults default [])]" doc:name="Set Documents Processed"/>
+
+	</sub-flow>
+
+	<!-- ============================================== -->
+	<!-- SYNC WORKFLOW STATUS SUBFLOW                  -->
+	<!-- ============================================== -->
+
+	<sub-flow name="sync-workflow-status-subflow" doc:name="Sync Workflow Status Subflow">
+		
+		<!-- Query Salesforce for Workflows needing sync -->
+		<set-variable variableName="sfQuery" value="SELECT Workflow_ID__c, Status__c, DocuSign_Status__c FROM Insurance_Workflow__c WHERE Last_Sync_Timestamp__c = null OR Last_Sync_Timestamp__c &lt; LAST_N_HOURS:1" doc:name="Set Query"/>
+		<flow-ref name="sf-query-records-flow" doc:name="Query Workflows"/>
+
+		<!-- Process Each Workflow -->
+		<foreach collection="#[vars.sfQueryResults default []]" doc:name="For Each Workflow">
+			
+			<!-- Retrieve Local State -->
+			<os:retrieve key="#[payload.Workflow_ID__c]" objectStore="Workflow_Object_Store" target="localWfState" doc:name="Retrieve Local State">
+				<os:default-value><![CDATA[#[null]]]></os:default-value>
+			</os:retrieve>
+
+			<!-- Update Salesforce if Local State Differs -->
+			<choice doc:name="State Differs?">
+				<when expression="#[vars.localWfState != null and vars.localWfState.status != payload.Status__c]">
+					
+					<!-- Build Update Record -->
+					<ee:transform doc:name="Build Update Record">
+						<ee:message>
+							<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+[{
+	"Workflow_ID__c": vars.localWfState.workflowId,
+	"Status__c": vars.localWfState.status,
+	"Approval_Decision__c": vars.localWfState.approvalDecision,
+	"Approval_Actor__c": vars.localWfState.approvalActor,
+	"DocuSign_Status__c": vars.localWfState.docuSignStatus,
+	"DocuSign_Envelope_ID__c": vars.localWfState.docuSignEnvelopeId,
+	"Last_Sync_Timestamp__c": now()
+}]]]></ee:set-payload>
+						</ee:message>
+					</ee:transform>
+
+					<!-- Upsert to Salesforce -->
+					<flow-ref name="sf-upsert-process-record-flow" doc:name="Upsert Workflow"/>
+
+				</when>
+			</choice>
+
+		</foreach>
+
+		<!-- Set Workflows Processed Count -->
+		<set-variable variableName="workflowsProcessed" value="#[sizeOf(vars.sfQueryResults default [])]" doc:name="Set Workflows Processed"/>
+
+	</sub-flow>
+
+</mule>

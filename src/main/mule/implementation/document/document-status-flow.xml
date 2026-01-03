@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+	<!-- ============================================== -->
+	<!-- DOCUMENT STATUS FLOW                          -->
+	<!-- Retrieves document processing status          -->
+	<!-- ============================================== -->
+
+	<flow name="document-status-flow" doc:name="Document Status Flow">
+		
+		<!-- Extract Document ID from URI -->
+		<set-variable variableName="documentId" value="#[attributes.uriParams.documentId]" doc:name="Extract Document ID"/>
+
+		<!-- Log Business Event -->
+		<set-variable variableName="eventType" value="DOCUMENT_STATUS_QUERY" doc:name="Set Event Type"/>
+		<set-variable variableName="eventDetails" value='#[{"documentId": vars.documentId}]' doc:name="Set Event Details"/>
+		<flow-ref name="log-business-event-subflow" doc:name="Log Business Event"/>
+
+		<!-- Retrieve Document State from Object Store -->
+		<os:retrieve key="#[vars.documentId]" objectStore="Document_Object_Store" target="documentState" doc:name="Retrieve Document State">
+			<os:default-value><![CDATA[#[null]]]></os:default-value>
+		</os:retrieve>
+
+		<!-- Check if Document Exists -->
+		<choice doc:name="Document Exists?">
+			<when expression="#[vars.documentState == null]">
+				<raise-error type="APP:RESOURCE_NOT_FOUND" description='#["Document not found: " ++ vars.documentId]' doc:name="Raise Not Found Error"/>
+			</when>
+			<otherwise>
+				<!-- Build Response -->
+				<ee:transform doc:name="Build Status Response">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var docState = vars.documentState
+---
+{
+	documentId: docState.documentId,
+	classification: docState.classification default "PENDING",
+	ocrStatus: docState.ocrStatus default "PENDING",
+	processingStatus: docState.processingStatus default "AWAITING_OCR"
+}]]></ee:set-payload>
+					</ee:message>
+					<ee:variables>
+						<ee:set-variable variableName="httpStatus"><![CDATA[200]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</otherwise>
+		</choice>
+
+	</flow>
+
+</mule>

@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+	<!-- ============================================== -->
+	<!-- DOCUSIGN STATUS UPDATE FLOW                   -->
+	<!-- Handles DocuSign webhook callbacks and        -->
+	<!-- updates workflow/Salesforce status            -->
+	<!-- ============================================== -->
+
+	<flow name="docusign-status-update-flow" doc:name="DocuSign Status Update Flow">
+		
+		<!-- Extract Envelope Status from Callback -->
+		<ee:transform doc:name="Extract Callback Data">
+			<ee:variables>
+				<ee:set-variable variableName="envelopeId"><![CDATA[%dw 2.0
+output application/java
+---
+payload.envelopeId default ""]]></ee:set-variable>
+				<ee:set-variable variableName="envelopeStatus"><![CDATA[%dw 2.0
+output application/java
+---
+payload.status default ""]]></ee:set-variable>
+				<ee:set-variable variableName="completedDateTime"><![CDATA[%dw 2.0
+output application/java
+---
+payload.completedDateTime default null]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+
+		<!-- Log Business Event -->
+		<set-variable variableName="eventType" value="DOCUSIGN_STATUS_CALLBACK_RECEIVED" doc:name="Set Event Type"/>
+		<set-variable variableName="eventDetails" value='#[{"envelopeId": vars.envelopeId, "status": vars.envelopeStatus}]' doc:name="Set Event Details"/>
+		<flow-ref name="log-business-event-subflow" doc:name="Log Business Event"/>
+
+		<!-- Retrieve Envelope State -->
+		<os:retrieve key="#[vars.envelopeId]" objectStore="DocuSign_Object_Store" target="envelopeState" doc:name="Retrieve Envelope State">
+			<os:default-value><![CDATA[#[null]]]></os:default-value>
+		</os:retrieve>
+
+		<!-- Check if Envelope Exists -->
+		<choice doc:name="Envelope Exists?">
+			<when expression="#[vars.envelopeState != null]">
+				
+				<!-- Extract Workflow ID -->
+				<set-variable variableName="workflowId" value="#[vars.envelopeState.workflowId]" doc:name="Extract Workflow ID"/>
+
+				<!-- Update Envelope State -->
+				<flow-ref name="update-envelope-state-subflow" doc:name="Update Envelope State"/>
+
+				<!-- Update Workflow State -->
+				<flow-ref name="update-workflow-docusign-status-subflow" doc:name="Update Workflow Status"/>
+
+				<!-- Update Salesforce -->
+				<flow-ref name="sf-update-docusign-status-subflow" doc:name="Update SF DocuSign Status"/>
+
+				<!-- Log Business Event -->
+				<set-variable variableName="eventType" value="DOCUSIGN_STATUS_PROCESSED" doc:name="Set Event Type"/>
+				<set-variable variableName="eventDetails" value='#[{"envelopeId": vars.envelopeId, "workflowId": vars.workflowId, "status": vars.envelopeStatus}]' doc:name="Set Event Details"/>
+				<flow-ref name="log-business-event-subflow" doc:name="Log Business Event"/>
+
+			</when>
+			<otherwise>
+				<logger level="WARN" doc:name="Log Unknown Envelope" message='#["DocuSign callback received for unknown envelope: " ++ vars.envelopeId]'/>
+			</otherwise>
+		</choice>
+
+		<!-- Return Acknowledgment -->
+		<ee:transform doc:name="Build Acknowledgment">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	acknowledged: true,
+	envelopeId: vars.envelopeId,
+	processedTimestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+	</flow>
+
+	<!-- ============================================== -->
+	<!-- UPDATE ENVELOPE STATE SUBFLOW                 -->
+	<!-- ============================================== -->
+
+	<sub-flow name="update-envelope-state-subflow" doc:name="Update Envelope State Subflow">
+		
+		<!-- Build Updated Envelope State -->
+		<ee:transform doc:name="Build Updated State">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var envState = vars.envelopeState
+---
+envState ++ {
+	status: vars.envelopeStatus,
+	completedDateTime: vars.completedDateTime,
+	lastUpdatedTimestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+		<!-- Update Object Store -->
+		<os:store key="#[vars.envelopeId]" objectStore="DocuSign_Object_Store" doc:name="Update Envelope State">
+			<os:value><![CDATA[#[payload]]]></os:value>
+		</os:store>
+
+	</sub-flow>
+
+	<!-- ============================================== -->
+	<!-- UPDATE WORKFLOW DOCUSIGN STATUS SUBFLOW       -->
+	<!-- ============================================== -->
+
+	<sub-flow name="update-workflow-docusign-status-subflow" doc:name="Update Workflow DocuSign Status Subflow">
+		
+		<!-- Retrieve Workflow State -->
+		<os:retrieve key="#[vars.workflowId]" objectStore="Workflow_Object_Store" target="workflowState" doc:name="Retrieve Workflow State">
+			<os:default-value><![CDATA[#[null]]]></os:default-value>
+		</os:retrieve>
+
+		<!-- Update Workflow State if exists -->
+		<choice doc:name="Workflow Exists?">
+			<when expression="#[vars.workflowState != null]">
+				
+				<!-- Determine Final Workflow Status -->
+				<ee:transform doc:name="Determine Workflow Status">
+					<ee:variables>
+						<ee:set-variable variableName="finalWorkflowStatus"><![CDATA[%dw 2.0
+output application/java
+---
+if (vars.envelopeStatus == "completed") "COMPLETED"
+else if (vars.envelopeStatus == "declined") "SIGNATURE_DECLINED"
+else if (vars.envelopeStatus == "voided") "VOIDED"
+else vars.workflowState.status]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+
+				<!-- Build Updated Workflow State -->
+				<ee:transform doc:name="Build Updated Workflow State">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var wfState = vars.workflowState
+---
+wfState ++ {
+	status: vars.finalWorkflowStatus,
+	docuSignStatus: vars.envelopeStatus,
+	docuSignCompletedDateTime: vars.completedDateTime,
+	lastUpdatedTimestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"}
+}]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+
+				<!-- Update Object Store -->
+				<os:store key="#[vars.workflowId]" objectStore="Workflow_Object_Store" doc:name="Update Workflow State">
+					<os:value><![CDATA[#[payload]]]></os:value>
+				</os:store>
+
+			</when>
+		</choice>
+
+	</sub-flow>
+
+	<!-- ============================================== -->
+	<!-- SALESFORCE DOCUSIGN STATUS UPDATE SUBFLOW     -->
+	<!-- ============================================== -->
+
+	<sub-flow name="sf-update-docusign-status-subflow" doc:name="Update SF DocuSign Status Subflow">
+		
+		<!-- Set External Request Context -->
+		<set-variable variableName="targetSystem" value="SALESFORCE" doc:name="Set Target System"/>
+		<set-variable variableName="operation" value="UPDATE_DOCUSIGN_STATUS" doc:name="Set Operation"/>
+		<flow-ref name="log-external-request-subflow" doc:name="Log External Request"/>
+
+		<!-- Build Salesforce Update Record -->
+		<ee:transform doc:name="Build SF Update Record">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+[{
+	"Workflow_ID__c": vars.workflowId,
+	"Status__c": vars.finalWorkflowStatus default vars.workflowState.status,
+	"DocuSign_Status__c": vars.envelopeStatus,
+	"DocuSign_Completed_DateTime__c": vars.completedDateTime
+}]]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+		<!-- Upsert to Salesforce -->
+		<flow-ref name="sf-upsert-process-record-flow" doc:name="Upsert to Salesforce"/>
+
+	</sub-flow>
+
+</mule>

@@ -1,0 +1,290 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+	xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+		http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<munit:config name="workflow-approval-test-suite" doc:name="MUnit Configuration"/>
+
+	<!-- ============================================== -->
+	<!-- TEST: Workflow Initiation Success             -->
+	<!-- ============================================== -->
+
+	<munit:test name="workflow-initiation-success-test" doc:name="Workflow Initiation Success Test" description="Test successful workflow initiation">
+		
+		<munit:behavior>
+			
+			<!-- Mock Workflow Engine HTTP Request -->
+			<munit-tools:mock-when processor="http:request" doc:name="Mock Workflow Engine Request">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute whereValue="Workflow_HTTP_Request_Config" attributeName="config-ref"/>
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"status": "CREATED", "externalWorkflowId": "EXT-WF-12345"}]' mediaType="application/json"/>
+					<munit-tools:attributes value='#[{"statusCode": 201}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Mock Object Store Store -->
+			<munit-tools:mock-when processor="os:store" doc:name="Mock OS Store">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+
+			<!-- Mock Salesforce Upsert -->
+			<munit-tools:mock-when processor="salesforce:upsert" doc:name="Mock Salesforce Upsert">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"items": [{"id": "a0B1234567890AB", "successful": true}]}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Set Test Event -->
+			<munit:set-event doc:name="Set Test Event">
+				<munit:payload value='#[{
+					"workflowType": "CLAIM_ADJUSTER_APPROVAL",
+					"referenceId": "CLM-902344",
+					"priority": "HIGH",
+					"assignedRole": "SENIOR_ADJUSTER"
+				}]' mediaType="application/json"/>
+				<munit:attributes value='#[{"headers": {"client_id": "test-client", "client_secret": "test-secret"}}]'/>
+				<munit:variables>
+					<munit:variable key="correlationId" value="test-correlation-id-008"/>
+				</munit:variables>
+			</munit:set-event>
+
+		</munit:behavior>
+
+		<munit:execution>
+			<flow-ref name="workflow-initiation-flow" doc:name="Execute Workflow Initiation Flow"/>
+		</munit:execution>
+
+		<munit:validation>
+			<!-- Assert Response Status -->
+			<munit-tools:assert-that doc:name="Assert HTTP Status 201" expression="#[vars.httpStatus]" is="#[MunitTools::equalTo(201)]"/>
+			
+			<!-- Assert Workflow ID Present -->
+			<munit-tools:assert-that doc:name="Assert Workflow ID Present" expression="#[payload.workflowId]" is="#[MunitTools::notNullValue()]"/>
+			
+			<!-- Assert Status -->
+			<munit-tools:assert-that doc:name="Assert Status IN_PROGRESS" expression="#[payload.status]" is="#[MunitTools::equalTo('IN_PROGRESS')]"/>
+		</munit:validation>
+
+	</munit:test>
+
+	<!-- ============================================== -->
+	<!-- TEST: Workflow Approval Success (APPROVED)    -->
+	<!-- ============================================== -->
+
+	<munit:test name="workflow-approval-approved-test" doc:name="Workflow Approval Approved Test" description="Test successful workflow approval with APPROVED decision">
+		
+		<munit:behavior>
+			
+			<!-- Mock Object Store Retrieve for Workflow -->
+			<munit-tools:mock-when processor="os:retrieve" doc:name="Mock OS Retrieve">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute whereValue="Workflow_Object_Store" attributeName="objectStore"/>
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{
+						"workflowId": "WF-12345678",
+						"workflowType": "CLAIM_ADJUSTER_APPROVAL",
+						"referenceId": "CLM-902344",
+						"status": "IN_PROGRESS"
+					}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Mock Workflow Engine HTTP Request -->
+			<munit-tools:mock-when processor="http:request" doc:name="Mock Workflow Engine Request">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute whereValue="Workflow_HTTP_Request_Config" attributeName="config-ref"/>
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"status": "UPDATED"}]' mediaType="application/json"/>
+					<munit-tools:attributes value='#[{"statusCode": 200}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Mock DocuSign HTTP Requests -->
+			<munit-tools:mock-when processor="http:request" doc:name="Mock DocuSign Request">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute whereValue="DocuSign_HTTP_Request_Config" attributeName="config-ref"/>
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"access_token": "mock-token", "envelopeId": "ENV-12345678", "status": "sent"}]' mediaType="application/json"/>
+					<munit-tools:attributes value='#[{"statusCode": 201}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Mock Object Store Store -->
+			<munit-tools:mock-when processor="os:store" doc:name="Mock OS Store">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+
+			<!-- Mock Salesforce Upsert -->
+			<munit-tools:mock-when processor="salesforce:upsert" doc:name="Mock Salesforce Upsert">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"items": [{"id": "a0B1234567890AB", "successful": true}]}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Set Test Event -->
+			<munit:set-event doc:name="Set Test Event">
+				<munit:payload value='#[{
+					"decision": "APPROVED",
+					"actor": "adjuster.john",
+					"comments": "Claim approved after review"
+				}]' mediaType="application/json"/>
+				<munit:attributes value='#[{
+					"uriParams": {"workflowId": "WF-12345678"},
+					"headers": {"client_id": "test-client", "client_secret": "test-secret"}
+				}]'/>
+				<munit:variables>
+					<munit:variable key="correlationId" value="test-correlation-id-009"/>
+				</munit:variables>
+			</munit:set-event>
+
+		</munit:behavior>
+
+		<munit:execution>
+			<flow-ref name="workflow-approval-flow" doc:name="Execute Workflow Approval Flow"/>
+		</munit:execution>
+
+		<munit:validation>
+			<!-- Assert Response Status -->
+			<munit-tools:assert-that doc:name="Assert HTTP Status 200" expression="#[vars.httpStatus]" is="#[MunitTools::equalTo(200)]"/>
+			
+			<!-- Assert Workflow ID -->
+			<munit-tools:assert-that doc:name="Assert Workflow ID" expression="#[payload.workflowId]" is="#[MunitTools::equalTo('WF-12345678')]"/>
+			
+			<!-- Assert Status -->
+			<munit-tools:assert-that doc:name="Assert Status" expression="#[payload.status]" is="#[MunitTools::equalTo('APPROVED_PENDING_SIGNATURE')]"/>
+		</munit:validation>
+
+	</munit:test>
+
+	<!-- ============================================== -->
+	<!-- TEST: Workflow Approval Rejected              -->
+	<!-- ============================================== -->
+
+	<munit:test name="workflow-approval-rejected-test" doc:name="Workflow Approval Rejected Test" description="Test workflow approval with REJECTED decision">
+		
+		<munit:behavior>
+			
+			<!-- Mock Object Store Retrieve for Workflow -->
+			<munit-tools:mock-when processor="os:retrieve" doc:name="Mock OS Retrieve">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute whereValue="Workflow_Object_Store" attributeName="objectStore"/>
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{
+						"workflowId": "WF-12345678",
+						"workflowType": "CLAIM_ADJUSTER_APPROVAL",
+						"referenceId": "CLM-902344",
+						"status": "IN_PROGRESS"
+					}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Mock Workflow Engine HTTP Request -->
+			<munit-tools:mock-when processor="http:request" doc:name="Mock Workflow Engine Request">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute whereValue="Workflow_HTTP_Request_Config" attributeName="config-ref"/>
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"status": "UPDATED"}]' mediaType="application/json"/>
+					<munit-tools:attributes value='#[{"statusCode": 200}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Mock Object Store Store -->
+			<munit-tools:mock-when processor="os:store" doc:name="Mock OS Store">
+				<munit-tools:then-return/>
+			</munit-tools:mock-when>
+
+			<!-- Mock Salesforce Upsert -->
+			<munit-tools:mock-when processor="salesforce:upsert" doc:name="Mock Salesforce Upsert">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[{"items": [{"id": "a0B1234567890AB", "successful": true}]}]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Set Test Event -->
+			<munit:set-event doc:name="Set Test Event">
+				<munit:payload value='#[{
+					"decision": "REJECTED",
+					"actor": "adjuster.john",
+					"comments": "Claim rejected due to insufficient documentation"
+				}]' mediaType="application/json"/>
+				<munit:attributes value='#[{
+					"uriParams": {"workflowId": "WF-12345678"},
+					"headers": {"client_id": "test-client", "client_secret": "test-secret"}
+				}]'/>
+				<munit:variables>
+					<munit:variable key="correlationId" value="test-correlation-id-010"/>
+				</munit:variables>
+			</munit:set-event>
+
+		</munit:behavior>
+
+		<munit:execution>
+			<flow-ref name="workflow-approval-flow" doc:name="Execute Workflow Approval Flow"/>
+		</munit:execution>
+
+		<munit:validation>
+			<!-- Assert Response Status -->
+			<munit-tools:assert-that doc:name="Assert HTTP Status 200" expression="#[vars.httpStatus]" is="#[MunitTools::equalTo(200)]"/>
+			
+			<!-- Assert Status -->
+			<munit-tools:assert-that doc:name="Assert Status REJECTED" expression="#[payload.status]" is="#[MunitTools::equalTo('REJECTED')]"/>
+		</munit:validation>
+
+	</munit:test>
+
+	<!-- ============================================== -->
+	<!-- TEST: Workflow Approval Not Found             -->
+	<!-- ============================================== -->
+
+	<munit:test name="workflow-approval-not-found-test" doc:name="Workflow Approval Not Found Test" description="Test workflow approval for non-existent workflow" expectedErrorType="APP:RESOURCE_NOT_FOUND">
+		
+		<munit:behavior>
+			
+			<!-- Mock Object Store Retrieve returning null -->
+			<munit-tools:mock-when processor="os:retrieve" doc:name="Mock OS Retrieve">
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[null]'/>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+
+			<!-- Set Test Event -->
+			<munit:set-event doc:name="Set Test Event">
+				<munit:payload value='#[{
+					"decision": "APPROVED",
+					"actor": "adjuster.john",
+					"comments": "Approved"
+				}]' mediaType="application/json"/>
+				<munit:attributes value='#[{
+					"uriParams": {"workflowId": "WF-NONEXISTENT"},
+					"headers": {"client_id": "test-client", "client_secret": "test-secret"}
+				}]'/>
+				<munit:variables>
+					<munit:variable key="correlationId" value="test-correlation-id-011"/>
+				</munit:variables>
+			</munit:set-event>
+
+		</munit:behavior>
+
+		<munit:execution>
+			<flow-ref name="workflow-approval-flow" doc:name="Execute Workflow Approval Flow"/>
+		</munit:execution>
+
+	</munit:test>
+
+</mule>

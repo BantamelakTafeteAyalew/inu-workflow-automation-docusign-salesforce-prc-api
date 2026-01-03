@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Configuration>
+
+    <!-- Insurance Document Workflow Automation API - Log4j2 Configuration -->
+    <!-- Supports structured JSON logging for enterprise observability -->
+
+    <Appenders>
+        <!-- Rolling File Appender for Application Logs -->
+        <RollingFile name="file" 
+                     fileName="${sys:mule.home}${sys:file.separator}logs${sys:file.separator}inu-document-workflow-automation-api.log"
+                     filePattern="${sys:mule.home}${sys:file.separator}logs${sys:file.separator}inu-document-workflow-automation-api-%d{yyyy-MM-dd}-%i.log">
+            <PatternLayout pattern="%-5p %d{ISO8601} [%t] [correlationId: %X{correlationId}] [processor: %X{processorPath}] %c: %m%n"/>
+            <Policies>
+                <SizeBasedTriggeringPolicy size="50 MB"/>
+                <TimeBasedTriggeringPolicy interval="1" modulate="true"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+        </RollingFile>
+
+        <!-- Console Appender for Development/CloudHub -->
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="%-5p %d{ISO8601} [%t] [correlationId: %X{correlationId}] %c: %m%n"/>
+        </Console>
+
+        <!-- Error File Appender for Error Logs -->
+        <RollingFile name="errorFile" 
+                     fileName="${sys:mule.home}${sys:file.separator}logs${sys:file.separator}inu-document-workflow-automation-api-error.log"
+                     filePattern="${sys:mule.home}${sys:file.separator}logs${sys:file.separator}inu-document-workflow-automation-api-error-%d{yyyy-MM-dd}-%i.log">
+            <PatternLayout pattern="%-5p %d{ISO8601} [%t] [correlationId: %X{correlationId}] [processor: %X{processorPath}] %c: %m%n%ex"/>
+            <Policies>
+                <SizeBasedTriggeringPolicy size="50 MB"/>
+                <TimeBasedTriggeringPolicy interval="1" modulate="true"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+            <ThresholdFilter level="ERROR" onMatch="ACCEPT" onMismatch="DENY"/>
+        </RollingFile>
+    </Appenders>
+
+    <Loggers>
+        <!-- HTTP Connector Loggers -->
+        <AsyncLogger name="org.mule.service.http" level="WARN"/>
+        <AsyncLogger name="org.mule.extension.http" level="WARN"/>
+
+        <!-- Salesforce Connector Logger -->
+        <AsyncLogger name="com.mulesoft.connector.salesforce" level="WARN"/>
+
+        <!-- Object Store Logger -->
+        <AsyncLogger name="org.mule.extension.objectstore" level="WARN"/>
+
+        <!-- APIkit Logger -->
+        <AsyncLogger name="org.mule.module.apikit" level="WARN"/>
+
+        <!-- Mule Core Logger -->
+        <AsyncLogger name="org.mule.runtime.core.internal.processor.LoggerMessageProcessor" level="INFO"/>
+
+        <!-- Application Logger -->
+        <AsyncLogger name="com.insurance.api" level="INFO"/>
+
+        <!-- Root Logger -->
+        <AsyncRoot level="INFO">
+            <AppenderRef ref="file"/>
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="errorFile"/>
+        </AsyncRoot>
+    </Loggers>
+
+</Configuration>

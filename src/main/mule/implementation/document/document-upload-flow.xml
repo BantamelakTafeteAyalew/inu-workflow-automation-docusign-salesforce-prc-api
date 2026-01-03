@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+	<!-- ============================================== -->
+	<!-- DOCUMENT UPLOAD FLOW                          -->
+	<!-- Handles document ingestion, DMS storage,      -->
+	<!-- OCR processing, and classification            -->
+	<!-- ============================================== -->
+
+	<flow name="document-upload-flow" doc:name="Document Upload Flow">
+		
+		<!-- Extract multipart form data -->
+		<ee:transform doc:name="Extract Multipart Data">
+			<ee:variables>
+				<ee:set-variable variableName="documentFile"><![CDATA[%dw 2.0
+output application/java
+---
+payload.parts.file.content]]></ee:set-variable>
+				<ee:set-variable variableName="metadata"><![CDATA[%dw 2.0
+output application/java
+---
+read(payload.parts.metadata.content, "application/json")]]></ee:set-variable>
+				<ee:set-variable variableName="documentType"><![CDATA[%dw 2.0
+output application/java
+---
+read(payload.parts.metadata.content, "application/json").documentType]]></ee:set-variable>
+				<ee:set-variable variableName="sourceSystem"><![CDATA[%dw 2.0
+output application/java
+---
+read(payload.parts.metadata.content, "application/json").sourceSystem]]></ee:set-variable>
+				<ee:set-variable variableName="referenceId"><![CDATA[%dw 2.0
+output application/java
+---
+read(payload.parts.metadata.content, "application/json").referenceId]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+
+		<!-- Validate Request -->
+		<flow-ref name="validate-document-upload-request-subflow" doc:name="Validate Request"/>
+
+		<!-- Generate Document ID -->
+		<ee:transform doc:name="Generate Document ID">
+			<ee:variables>
+				<ee:set-variable variableName="documentId"><![CDATA[%dw 2.0
+output application/java
+---
+"DOC-" ++ (uuid() splitBy "-")[0]]]></ee:set-variable>
+				<ee:set-variable variableName="receivedTimestamp"><![CDATA[%dw 2.0
+output application/java
+---
+now()]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+
+		<!-- Log Business Event -->
+		<set-variable variableName="eventType" value="DOCUMENT_RECEIVED" doc:name="Set Event Type"/>
+		<set-variable variableName="eventDetails" value='#[{"documentId": vars.documentId, "documentType": vars.documentType, "referenceId": vars.referenceId}]' doc:name="Set Event Details"/>
+		<flow-ref name="log-business-event-subflow" doc:name="Log Business Event"/>
+
+		<!-- Store Document in DMS -->
+		<flow-ref name="store-document-in-dms-subflow" doc:name="Store in DMS"/>
+
+		<!-- Trigger OCR Processing -->
+		<flow-ref name="trigger-ocr-processing-subflow" doc:name="Trigger OCR"/>
+
+		<!-- Store Document State in Object Store -->
+		<flow-ref name="store-document-state-subflow" doc:name="Store Document State"/>
+
+		<!-- Update Salesforce with Document Record -->
+		<flow-ref name="sf-create-document-record-subflow" doc:name="Create SF Document Record"/>
+
+		<!-- Build Response -->
+		<ee:transform doc:name="Build Upload Response">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	documentId: vars.documentId,
+	status: "RECEIVED",
+	receivedTimestamp: vars.receivedTimestamp as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"}
+}]]></ee:set-payload>
+			</ee:message>
+			<ee:variables>
+				<ee:set-variable variableName="httpStatus"><![CDATA[201]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+
+	</flow>
+
+	<!-- ============================================== -->
+	<!-- DMS INTEGRATION SUBFLOW                       -->
+	<!-- ============================================== -->
+
+	<sub-flow name="store-document-in-dms-subflow" doc:name="Store Document in DMS Subflow">
+		
+		<!-- Set External Request Context -->
+		<set-variable variableName="targetSystem" value="DMS" doc:name="Set Target System"/>
+		<set-variable variableName="operation" value="STORE_DOCUMENT" doc:name="Set Operation"/>
+		<flow-ref name="log-external-request-subflow" doc:name="Log External Request"/>
+		<flow-ref name="propagate-correlation-id-subflow" doc:name="Propagate Correlation ID"/>
+
+		<!-- Build DMS Request -->
+		<ee:transform doc:name="Build DMS Request">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	documentId: vars.documentId,
+	documentType: vars.documentType,
+	sourceSystem: vars.sourceSystem,
+	referenceId: vars.referenceId,
+	metadata: vars.metadata.metadata default {},
+	content: vars.documentFile as Binary,
+	uploadedBy: "MULE_API",
+	uploadTimestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+		<!-- Call DMS API -->
+		<http:request method="POST" config-ref="DMS_HTTP_Request_Config" path="${dms.basePath}" doc:name="Store in DMS">
+			<http:headers><![CDATA[#[vars.correlationHeaders]]]></http:headers>
+		</http:request>
+
+		<!-- Store DMS Response -->
+		<set-variable variableName="dmsResponse" value="#[payload]" doc:name="Store DMS Response"/>
+		<flow-ref name="log-external-response-subflow" doc:name="Log External Response"/>
+
+	</sub-flow>
+
+	<!-- ============================================== -->
+	<!-- OCR INTEGRATION SUBFLOW                       -->
+	<!-- ============================================== -->
+
+	<sub-flow name="trigger-ocr-processing-subflow" doc:name="Trigger OCR Processing Subflow">
+		
+		<!-- Set External Request Context -->
+		<set-variable variableName="targetSystem" value="OCR" doc:name="Set Target System"/>
+		<set-variable variableName="operation" value="PROCESS_DOCUMENT" doc:name="Set Operation"/>
+		<flow-ref name="log-external-request-subflow" doc:name="Log External Request"/>
+		<flow-ref name="propagate-correlation-id-subflow" doc:name="Propagate Correlation ID"/>
+
+		<!-- Build OCR Request -->
+		<ee:transform doc:name="Build OCR Request">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	documentId: vars.documentId,
+	documentType: vars.documentType,
+	callbackUrl: p('http.listener.host') ++ ":" ++ p('http.listener.port') ++ p('http.listener.basePath') ++ "/internal/ocr-callback",
+	options: {
+		extractText: true,
+		classifyDocument: true,
+		extractEntities: true
+	}
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+		<!-- Call OCR API (Async) -->
+		<http:request method="POST" config-ref="OCR_HTTP_Request_Config" path="${ocr.basePath}/process" doc:name="Trigger OCR">
+			<http:headers><![CDATA[#[vars.correlationHeaders]]]></http:headers>
+		</http:request>
+
+		<!-- Store OCR Response -->
+		<set-variable variableName="ocrResponse" value="#[payload]" doc:name="Store OCR Response"/>
+		<flow-ref name="log-external-response-subflow" doc:name="Log External Response"/>
+
+	</sub-flow>
+
+	<!-- ============================================== -->
+	<!-- DOCUMENT STATE MANAGEMENT SUBFLOW             -->
+	<!-- ============================================== -->
+
+	<sub-flow name="store-document-state-subflow" doc:name="Store Document State Subflow">
+		
+		<!-- Build Document State Object -->
+		<ee:transform doc:name="Build Document State">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+	documentId: vars.documentId,
+	documentType: vars.documentType,
+	sourceSystem: vars.sourceSystem,
+	referenceId: vars.referenceId,
+	status: "RECEIVED",
+	ocrStatus: "PENDING",
+	classification: null,
+	processingStatus: "AWAITING_OCR",
+	createdTimestamp: vars.receivedTimestamp as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	lastUpdatedTimestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	correlationId: vars.correlationId
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+		<!-- Store in Object Store -->
+		<os:store key="#[vars.documentId]" objectStore="Document_Object_Store" doc:name="Store Document State">
+			<os:value><![CDATA[#[payload]]]></os:value>
+		</os:store>
+
+	</sub-flow>
+
+	<!-- ============================================== -->
+	<!-- SALESFORCE DOCUMENT RECORD SUBFLOW            -->
+	<!-- ============================================== -->
+
+	<sub-flow name="sf-create-document-record-subflow" doc:name="Create SF Document Record Subflow">
+		
+		<!-- Set External Request Context -->
+		<set-variable variableName="targetSystem" value="SALESFORCE" doc:name="Set Target System"/>
+		<set-variable variableName="operation" value="CREATE_DOCUMENT_RECORD" doc:name="Set Operation"/>
+		<flow-ref name="log-external-request-subflow" doc:name="Log External Request"/>
+
+		<!-- Build Salesforce Record -->
+		<ee:transform doc:name="Build SF Document Record">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+[{
+	"Document_ID__c": vars.documentId,
+	"Document_Type__c": vars.documentType,
+	"Source_System__c": vars.sourceSystem,
+	"Reference_ID__c": vars.referenceId,
+	"Status__c": "RECEIVED",
+	"OCR_Status__c": "PENDING",
+	"Processing_Status__c": "AWAITING_OCR",
+	"Correlation_ID__c": vars.correlationId,
+	"Received_Timestamp__c": vars.receivedTimestamp
+}]]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+		<!-- Upsert to Salesforce -->
+		<flow-ref name="sf-upsert-process-record-flow" doc:name="Upsert to Salesforce"/>
+
+	</sub-flow>
+
+</mule>

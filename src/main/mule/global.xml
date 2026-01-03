@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+	xmlns:salesforce="http://www.mulesoft.org/schema/mule/salesforce"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xmlns:secure-properties="http://www.mulesoft.org/schema/mule/secure-properties"
+	xmlns:api-gateway="http://www.mulesoft.org/schema/mule/api-gateway"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+		http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd
+		http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+		http://www.mulesoft.org/schema/mule/secure-properties http://www.mulesoft.org/schema/mule/secure-properties/current/mule-secure-properties.xsd
+		http://www.mulesoft.org/schema/mule/api-gateway http://www.mulesoft.org/schema/mule/api-gateway/current/mule-api-gateway.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<!-- ============================================== -->
+	<!-- GLOBAL PROPERTIES CONFIGURATION               -->
+	<!-- ============================================== -->
+	
+	<!-- Environment property - set via VM args: -Dmule.env=dev -->
+	<global-property name="mule.env" value="dev" doc:name="Environment Property"/>
+	
+	<!-- Encryption key - set via VM args: -Dencryption.key=your-key -->
+	<global-property name="encryption.key" value="${encryption.key}" doc:name="Encryption Key"/>
+	
+	<!-- Configuration Properties -->
+	<configuration-properties file="config/application.yaml" doc:name="Common Configuration"/>
+	<configuration-properties file="config/application-${mule.env}.yaml" doc:name="Environment Configuration"/>
+	
+	<!-- Secure Properties Configuration -->
+	<secure-properties:config name="Secure_Properties_Config" 
+		file="config/secure.yaml" 
+		key="${encryption.key}" 
+		doc:name="Secure Properties Config">
+		<secure-properties:encrypt algorithm="AES" mode="CBC"/>
+	</secure-properties:config>
+
+	<!-- Global Error Handler Reference -->
+	<configuration defaultErrorHandler-ref="global-error-handler" doc:name="Global Configuration"/>
+
+	<!-- ============================================== -->
+	<!-- HTTP LISTENER CONFIGURATION                   -->
+	<!-- ============================================== -->
+	
+	<http:listener-config name="HTTP_Listener_Config" doc:name="HTTP Listener Config">
+		<http:listener-connection host="${http.listener.host}" port="${http.listener.port}"/>
+	</http:listener-config>
+
+	<!-- ============================================== -->
+	<!-- APIKIT CONFIGURATION                          -->
+	<!-- ============================================== -->
+	
+	<apikit:config name="inu-document-workflow-automation-api-config" 
+		api="api/inu-document-workflow-automation-api.raml" 
+		outboundHeadersMapName="outboundHeaders" 
+		httpStatusVarName="httpStatus" 
+		doc:name="APIkit Config"/>
+
+	<!-- API Autodiscovery for Client ID Enforcement -->
+	<api-gateway:autodiscovery 
+		apiId="${api.id}" 
+		ignoreBasePath="true" 
+		doc:name="API Autodiscovery" 
+		flowRef="inu-document-workflow-automation-api-main"/>
+
+	<!-- ============================================== -->
+	<!-- HTTP REQUEST CONFIGURATIONS - EXTERNAL SYSTEMS -->
+	<!-- ============================================== -->
+	
+	<!-- Document Management System (DMS) - OpenText/SharePoint -->
+	<http:request-config name="DMS_HTTP_Request_Config" doc:name="DMS HTTP Request Config">
+		<http:request-connection host="${dms.host}" port="${dms.port}" protocol="HTTPS">
+			<http:default-headers>
+				<http:default-header key="Content-Type" value="application/json"/>
+				<http:default-header key="X-API-Key" value="${secure::dms.api.key}"/>
+			</http:default-headers>
+		</http:request-connection>
+	</http:request-config>
+
+	<!-- OCR & Document Classification System - ABBYY/AWS Textract -->
+	<http:request-config name="OCR_HTTP_Request_Config" doc:name="OCR HTTP Request Config">
+		<http:request-connection host="${ocr.host}" port="${ocr.port}" protocol="HTTPS">
+			<http:default-headers>
+				<http:default-header key="Content-Type" value="application/json"/>
+				<http:default-header key="X-API-Key" value="${secure::ocr.api.key}"/>
+			</http:default-headers>
+		</http:request-connection>
+	</http:request-config>
+
+	<!-- Rules Engine - Drools/FICO Blaze -->
+	<http:request-config name="Rules_HTTP_Request_Config" doc:name="Rules Engine HTTP Request Config">
+		<http:request-connection host="${rules.host}" port="${rules.port}" protocol="HTTPS">
+			<http:default-headers>
+				<http:default-header key="Content-Type" value="application/json"/>
+				<http:default-header key="X-API-Key" value="${secure::rules.api.key}"/>
+			</http:default-headers>
+		</http:request-connection>
+	</http:request-config>
+
+	<!-- Workflow Engine - ServiceNow/Camunda -->
+	<http:request-config name="Workflow_HTTP_Request_Config" doc:name="Workflow Engine HTTP Request Config">
+		<http:request-connection host="${workflow.host}" port="${workflow.port}" protocol="HTTPS">
+			<http:default-headers>
+				<http:default-header key="Content-Type" value="application/json"/>
+				<http:default-header key="X-API-Key" value="${secure::workflow.api.key}"/>
+			</http:default-headers>
+		</http:request-connection>
+	</http:request-config>
+
+	<!-- DocuSign eSignature -->
+	<http:request-config name="DocuSign_HTTP_Request_Config" doc:name="DocuSign HTTP Request Config">
+		<http:request-connection host="${docusign.host}" port="${docusign.port}" protocol="HTTPS">
+			<http:default-headers>
+				<http:default-header key="Content-Type" value="application/json"/>
+			</http:default-headers>
+		</http:request-connection>
+	</http:request-config>
+
+	<!-- ============================================== -->
+	<!-- SALESFORCE CONNECTOR CONFIGURATION            -->
+	<!-- ============================================== -->
+	
+	<salesforce:sfdc-config name="Salesforce_Config" doc:name="Salesforce Config">
+		<salesforce:basic-connection 
+			username="${salesforce.username}" 
+			password="${secure::salesforce.password}" 
+			securityToken="${secure::salesforce.token}" 
+			authorizationUrl="${salesforce.authorizationUrl}">
+			<reconnection>
+				<reconnect frequency="5000" count="3"/>
+			</reconnection>
+		</salesforce:basic-connection>
+	</salesforce:sfdc-config>
+
+	<!-- ============================================== -->
+	<!-- OBJECT STORE CONFIGURATIONS                   -->
+	<!-- ============================================== -->
+	
+	<!-- Document State Object Store -->
+	<os:object-store name="Document_Object_Store" 
+		persistent="true" 
+		maxEntries="${objectstore.document.maxEntries}" 
+		entryTtl="${objectstore.document.entryTtl}" 
+		entryTtlUnit="HOURS" 
+		expirationInterval="1" 
+		expirationIntervalUnit="HOURS" 
+		doc:name="Document Object Store"/>
+
+	<!-- Workflow State Object Store -->
+	<os:object-store name="Workflow_Object_Store" 
+		persistent="true" 
+		maxEntries="${objectstore.workflow.maxEntries}" 
+		entryTtl="${objectstore.workflow.entryTtl}" 
+		entryTtlUnit="HOURS" 
+		expirationInterval="1" 
+		expirationIntervalUnit="HOURS" 
+		doc:name="Workflow Object Store"/>
+
+	<!-- DocuSign Envelope Tracking Object Store -->
+	<os:object-store name="DocuSign_Object_Store" 
+		persistent="true" 
+		maxEntries="${objectstore.docusign.maxEntries}" 
+		entryTtl="${objectstore.docusign.entryTtl}" 
+		entryTtlUnit="HOURS" 
+		expirationInterval="1" 
+		expirationIntervalUnit="HOURS" 
+		doc:name="DocuSign Object Store"/>
+
+</mule>

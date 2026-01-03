@@ -1,0 +1,73 @@
+# Application Configuration - Common Settings
+# Environment-specific values should be in application-{env}.yaml
+
+http:
+  listener:
+    host: "0.0.0.0"
+    port: "8081"
+    basePath: "/api/v1"
+
+api:
+  id: "${api.id}"
+  name: "inu-document-workflow-automation-api"
+  version: "1.0.0"
+
+# Document Management System (DMS) - OpenText/SharePoint
+dms:
+  host: "${dms.host}"
+  port: "443"
+  basePath: "/api/v1/documents"
+  connectionTimeout: "30000"
+  responseTimeout: "60000"
+
+# OCR & Document Classification System - ABBYY/AWS Textract
+ocr:
+  host: "${ocr.host}"
+  port: "443"
+  basePath: "/api/v1/ocr"
+  connectionTimeout: "30000"
+  responseTimeout: "120000"
+
+# Rules Engine - Drools/FICO Blaze
+rules:
+  host: "${rules.host}"
+  port: "443"
+  basePath: "/api/v1/rules"
+  connectionTimeout: "30000"
+  responseTimeout: "60000"
+
+# Workflow Engine - ServiceNow/Camunda
+workflow:
+  host: "${workflow.host}"
+  port: "443"
+  basePath: "/api/v1/workflows"
+  connectionTimeout: "30000"
+  responseTimeout: "60000"
+
+# DocuSign Configuration
+docusign:
+  host: "${docusign.host}"
+  port: "443"
+  basePath: "/restapi/v2.1"
+  accountId: "${docusign.account.id}"
+  connectionTimeout: "30000"
+  responseTimeout: "120000"
+
+# Salesforce Configuration
+salesforce:
+  authorizationUrl: "https://login.salesforce.com/services/Soap/u/60.0"
+
+# Object Store Configuration
+objectstore:
+  document:
+    maxEntries: "10000"
+    entryTtl: "24"
+    entryTtlUnit: "HOURS"
+  workflow:
+    maxEntries: "10000"
+    entryTtl: "72"
+    entryTtlUnit: "HOURS"
+  docusign:
+    maxEntries: "10000"
+    entryTtl: "168"
+    entryTtlUnit: "HOURS"

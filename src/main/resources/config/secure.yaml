@@ -1,0 +1,36 @@
+# Secure Configuration Properties
+# All values must be encrypted using AES/CBC algorithm
+# Use: ${secure::property.name} to reference these values
+
+# Salesforce Credentials
+salesforce:
+  password: "![encrypted-sfdc-password]"
+  token: "![encrypted-sfdc-token]"
+
+# DocuSign Credentials
+docusign:
+  client:
+    id: "![encrypted-docusign-client-id]"
+    secret: "![encrypted-docusign-client-secret]"
+  private:
+    key: "![encrypted-docusign-private-key]"
+
+# DMS Credentials
+dms:
+  api:
+    key: "![encrypted-dms-api-key]"
+
+# OCR Service Credentials
+ocr:
+  api:
+    key: "![encrypted-ocr-api-key]"
+
+# Rules Engine Credentials
+rules:
+  api:
+    key: "![encrypted-rules-api-key]"
+
+# Workflow Engine Credentials
+workflow:
+  api:
+    key: "![encrypted-workflow-api-key]"

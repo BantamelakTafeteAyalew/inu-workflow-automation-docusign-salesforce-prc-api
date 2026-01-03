@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<!-- ============================================== -->
+	<!-- LOGGING SUBFLOWS                              -->
+	<!-- Centralized structured JSON logging           -->
+	<!-- ============================================== -->
+
+	<sub-flow name="log-request-subflow" doc:name="Log Request Subflow">
+		<logger level="INFO" doc:name="Log Request" message='#[%dw 2.0
+output application/json
+---
+{
+	"logType": "REQUEST",
+	"correlationId": vars.correlationId default correlationId,
+	"timestamp": now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	"method": attributes.method default "N/A",
+	"path": attributes.requestPath default "N/A",
+	"clientId": attributes.headers.client_id default "N/A",
+	"sourceSystem": attributes.headers."x-source-system" default "N/A"
+}]'/>
+	</sub-flow>
+
+	<sub-flow name="log-response-subflow" doc:name="Log Response Subflow">
+		<logger level="INFO" doc:name="Log Response" message='#[%dw 2.0
+output application/json
+---
+{
+	"logType": "RESPONSE",
+	"correlationId": vars.correlationId default correlationId,
+	"timestamp": now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	"httpStatus": vars.httpStatus default 200,
+	"processingTimeMs": (now() - (vars.requestStartTime default now())) as Number {unit: "milliseconds"}
+}]'/>
+	</sub-flow>
+
+	<sub-flow name="log-external-request-subflow" doc:name="Log External Request Subflow">
+		<logger level="INFO" doc:name="Log External Request" message='#[%dw 2.0
+output application/json
+---
+{
+	"logType": "EXTERNAL_REQUEST",
+	"correlationId": vars.correlationId default correlationId,
+	"timestamp": now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	"targetSystem": vars.targetSystem default "UNKNOWN",
+	"operation": vars.operation default "N/A"
+}]'/>
+	</sub-flow>
+
+	<sub-flow name="log-external-response-subflow" doc:name="Log External Response Subflow">
+		<logger level="INFO" doc:name="Log External Response" message='#[%dw 2.0
+output application/json
+---
+{
+	"logType": "EXTERNAL_RESPONSE",
+	"correlationId": vars.correlationId default correlationId,
+	"timestamp": now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	"targetSystem": vars.targetSystem default "UNKNOWN",
+	"operation": vars.operation default "N/A",
+	"httpStatus": attributes.statusCode default "N/A"
+}]'/>
+	</sub-flow>
+
+	<sub-flow name="log-error-subflow" doc:name="Log Error Subflow">
+		<logger level="ERROR" doc:name="Log Error" message='#[%dw 2.0
+output application/json
+---
+{
+	"logType": "ERROR",
+	"correlationId": vars.correlationId default correlationId,
+	"timestamp": now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	"errorType": error.errorType.identifier default "UNKNOWN",
+	"errorDescription": error.description default "No description available",
+	"failingComponent": error.failingComponent default "N/A"
+}]'/>
+	</sub-flow>
+
+	<sub-flow name="log-business-event-subflow" doc:name="Log Business Event Subflow">
+		<logger level="INFO" doc:name="Log Business Event" message='#[%dw 2.0
+output application/json
+---
+{
+	"logType": "BUSINESS_EVENT",
+	"correlationId": vars.correlationId default correlationId,
+	"timestamp": now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	"eventType": vars.eventType default "UNKNOWN",
+	"eventDetails": vars.eventDetails default {}
+}]'/>
+	</sub-flow>
+
+</mule>
